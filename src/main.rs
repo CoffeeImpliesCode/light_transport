@@ -53,8 +53,6 @@ fn main() {
         ..Default::default()
     };
 
-    puffin::set_scopes_on(false);
-
     eframe::run_native(
         "Light Transport",
         options,
