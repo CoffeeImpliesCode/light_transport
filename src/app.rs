@@ -38,7 +38,7 @@ impl LightTransport {
         let texture_handle = cc.egui_ctx.load_texture(
             "render",
             image, // egui::ColorImage::from_rgba_unmultiplied(image.dimension, image.bytes()),
-                  // egui::TextureFilter::Nearest,
+            egui::TextureFilter::Nearest,
         );
 
         let mut rng = rand::thread_rng();
@@ -159,7 +159,7 @@ impl eframe::App for LightTransport {
         // puffin_egui::profiler_window(ctx);
         {
             let image = self.renderer.take_image();
-            self.texture_handle.set(image);
+            self.texture_handle.set(image, egui::TextureFilter::Linear);
             /*if self.renderer.send.as_ref().unwrap().is_empty() {
                 self.renderer.render(&self.scene.lock());
             }*/
@@ -334,5 +334,5 @@ impl eframe::App for LightTransport {
         ctx.request_repaint();
     }
 
-    fn on_exit(&mut self, gl: &glow::Context) {}
+    fn on_exit(&mut self, gl: Option<&glow::Context>) {}
 }
