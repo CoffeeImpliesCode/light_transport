@@ -41,6 +41,26 @@ impl Color {
         unimplemented!()
     }
 
+    #[inline(always)]
+    pub fn gamma(&self) -> Self {
+        Color([
+            self[0].powf(2.2),
+            self[1].powf(2.2),
+            self[2].powf(2.2),
+            self[3].powf(2.2),
+        ])
+    }
+
+    #[inline(always)]
+    pub fn ungamma(&self) -> Self {
+        Color([
+            self[0].powf(1.0 / 2.2),
+            self[1].powf(1.0 / 2.2),
+            self[2].powf(1.0 / 2.2),
+            self[3].powf(1.0 / 2.2),
+        ])
+    }
+
     pub fn as_rgb_slice(&self) -> &[f32; 3] {
         self.0[..3].try_into().unwrap()
     }

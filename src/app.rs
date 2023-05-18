@@ -9,9 +9,11 @@ use egui::mutex::Mutex;
 use egui::Key;
 use rand::Rng;
 
+use crate::geometry::{Plane, Sphere};
 use crate::image::{Color, Image};
-use crate::math::Vec3;
-use crate::renderer::{Camera, Material, Plane, Renderer, Scene, Sphere};
+use crate::material::Material;
+use crate::math::{Vec3, F};
+use crate::renderer::{Camera, Renderer, Scene};
 
 pub struct LightTransport {
     pub renderer: Renderer,
@@ -30,7 +32,7 @@ impl LightTransport {
         let gl = cc.gl.as_ref(); // .expect("Run with glow backend!");
 
         let image = ColorImage::new(
-            [crate::IMAGE_WIDTH, crate::IMAGE_HEIGHT],
+            [crate::DEFAULT_IMAGE_WIDTH, crate::DEFAULT_IMAGE_HEIGHT],
             Color32::from_rgb(0, 0, 0),
         );
 
@@ -46,11 +48,11 @@ impl LightTransport {
         let mut spheres: Vec<Sphere> = (0..4)
             .into_iter()
             .map(|i| Sphere {
-                center: Vec3::new(
+                center: Vec3::new([
                     rng.gen_range(-0.5..0.5),
                     rng.gen_range(-0.5..0.5),
                     rng.gen_range(-0.5..0.5),
-                ),
+                ]),
                 radius: rng.gen_range(0.1..0.3),
                 id: i,
                 material: Material {
@@ -81,25 +83,71 @@ impl LightTransport {
 
         let scene = Arc::new(Mutex::new(Scene {
             camera: Camera {
-                origin: Vec3::new(-5.0, 0.0, 0.0),
-                right: Vec3::new(0.0, -1.0, 0.0),
-                up: Vec3::new(0.0, 0.0, 1.0),
+                origin: Vec3::new([-5.0, 0.0, 0.0]),
+                right: Vec3::new([0.0, -1.0, 0.0]),
+                up: Vec3::new([0.0, 0.0, 1.0]),
                 width: 0.5, //0.5 * (800.0 / 600.0),
                 height: 0.5,
             },
             spheres,
-            planes: vec![Plane {
-                support: Vec3::new(0.0, 0.0, -0.5),
-                normal: Vec3::new(0.0, 0.0, 1.0),
-                id: 100,
-                material: Material {
-                    color: Color::new(1.0, 1.0, 1.0, 1.0),
-                    emmission: 0.0,
-                    diffuse: 0.0,
-                    reflecting: 1.0,
+            planes: vec![
+                Plane {
+                    support: Vec3::new([0.0, 0.0, -0.5]),
+                    normal: Vec3::new([0.0, 0.0, 1.0]),
+                    id: 100,
+                    material: Material {
+                        color: Color::new(1.0, 1.0, 1.0, 1.0),
+                        emmission: 0.0,
+                        diffuse: 1.0,
+                        reflecting: 0.0,
+                    },
                 },
-            }],
-            light: Vec3::new(0.0, 0.0, 0.0),
+                Plane {
+                    support: Vec3::new([0.0, -1.0, 0.0]),
+                    normal: Vec3::new([0.0, 1.0, 0.0]),
+                    id: 101,
+                    material: Material {
+                        color: Color::new(1.0, 1.0, 1.0, 1.0),
+                        emmission: 0.0,
+                        diffuse: 1.0,
+                        reflecting: 0.0,
+                    },
+                },
+                Plane {
+                    support: Vec3::new([1.0, 0.0, 0.0]),
+                    normal: Vec3::new([-1.0, 0.0, 0.0]),
+                    id: 102,
+                    material: Material {
+                        color: Color::new(1.0, 1.0, 1.0, 1.0),
+                        emmission: 0.0,
+                        diffuse: 1.0,
+                        reflecting: 0.0,
+                    },
+                },
+                Plane {
+                    support: Vec3::new([-10.0, 0.0, 0.0]),
+                    normal: Vec3::new([1.0, 0.0, 0.0]),
+                    id: 103,
+                    material: Material {
+                        color: Color::new(1.0, 1.0, 1.0, 1.0),
+                        emmission: 0.0,
+                        diffuse: 1.0,
+                        reflecting: 0.0,
+                    },
+                },
+                Plane {
+                    support: Vec3::new([0.0, 1.0, 0.0]),
+                    normal: Vec3::new([0.0, -1.0, 0.0]),
+                    id: 104,
+                    material: Material {
+                        color: Color::new(1.0, 1.0, 1.0, 1.0),
+                        emmission: 0.0,
+                        diffuse: 1.0,
+                        reflecting: 0.0,
+                    },
+                },
+            ],
+            light: Vec3::new([0.0, 0.0, 0.0]),
             ambient: Material {
                 color: Color::new(0.1, 0.1, 0.1, 1.0),
                 diffuse: 0.0,
@@ -187,8 +235,8 @@ impl eframe::App for LightTransport {
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut scene = self.scene.lock();
-                    let dx = drag_delta.x as f64 * 0.0005;
-                    let dy = drag_delta.y as f64 * 0.0005;
+                    let dx = drag_delta.x as F * 0.0005;
+                    let dy = drag_delta.y as F * 0.0005;
 
                     let u = scene.camera.up;
                     let r = scene.camera.right;
@@ -228,7 +276,7 @@ impl eframe::App for LightTransport {
                             scene.camera.origin -= up * 0.02;
                         }
                         if input.key_down(Key::Escape) {
-                            frame.quit();
+                            frame.close();
                         }
                         if input.key_down(Key::R) {
                             let mut lock = self.renderer.avg_rps.lock();
@@ -243,6 +291,14 @@ impl eframe::App for LightTransport {
                         1.0,
                     );*/
                     ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Width:");
+                            ui.add(Slider::new(&mut self.renderer.size.lock()[0], 64..=1024));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Height:");
+                            ui.add(Slider::new(&mut self.renderer.size.lock()[1], 64..=1024));
+                        });
                         ui.horizontal(|ui| {
                             ui.label("Samples");
                             ui.add(Slider::new(&mut scene.num_samples, 1..=1000));
@@ -305,7 +361,7 @@ impl eframe::App for LightTransport {
                             ui.label("Diffuse | Reflecting | Emmission");
                             ui.add(Slider::new(&mut plane.material.diffuse, 0.0..=1.0));
                             ui.add(Slider::new(&mut plane.material.reflecting, 0.0..=1.0));
-                            ui.add(Slider::new(&mut plane.material.emmission, 0.0..=1.0));
+                            ui.add(Slider::new(&mut plane.material.emmission, 0.0..=10.0));
                         }
                     });
                 });
