@@ -19,138 +19,13 @@ use egui::mutex::Mutex;
 use crate::Image;
 use crate::{
     image::{Color, GlobalMutImage},
-    IMAGE_HEIGHT, IMAGE_WIDTH,
+    DEFAULT_IMAGE_HEIGHT, DEFAULT_IMAGE_WIDTH,
 };
 
-use crate::math::Vec3;
+use crate::material::Material;
+use crate::math::{Constants, Vec3, F};
 
-type Id = usize;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Intersection {
-    pub distance: f64,
-    pub id: Id,
-}
-
-impl PartialOrd for Intersection {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.distance.total_cmp(&other.distance))
-    }
-}
-
-impl Intersection {
-    pub fn new(distance: f64, id: Id) -> Self {
-        Intersection { distance, id }
-    }
-
-    pub fn invalid() -> Self {
-        Intersection {
-            distance: std::f64::INFINITY,
-            id: 0,
-        }
-    }
-
-    pub fn is_invalid(&self) -> bool {
-        self.distance == std::f64::INFINITY
-    }
-
-    pub fn wrap(self) -> Option<Intersection> {
-        if self.is_invalid() {
-            None
-        } else {
-            Some(self)
-        }
-    }
-}
-
-pub trait Intersect {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection>;
-}
-
-#[derive(Debug)]
-pub struct HitInfo {
-    pub normal: Vec3,
-    pub material: Material,
-}
-
-pub trait Hit {
-    fn hit(&self, closest: Vec3) -> HitInfo;
-}
-
-#[derive(Debug, Clone)]
-pub struct Ray {
-    origin: Vec3,
-    direction: Vec3,
-}
-
-#[derive(Debug, Clone)]
-pub struct Sphere {
-    pub id: Id,
-    pub center: Vec3,
-    pub radius: f64,
-    pub material: Material,
-}
-
-impl Intersect for Sphere {
-    #[inline(always)]
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
-        let m = ray.origin - self.center;
-        let b = m * ray.direction;
-        let c = m * m - self.radius * self.radius;
-
-        if c > 0.0 && b > 0.0 {
-            return None;
-        }
-        let discriminant = b * b - c;
-
-        if discriminant < 0.0 {
-            return None;
-        }
-
-        return Some(Intersection {
-            distance: -b - discriminant.sqrt(),
-            id: self.id,
-        });
-    }
-}
-
-impl Hit for Sphere {
-    #[inline(always)]
-    fn hit(&self, closest: Vec3) -> HitInfo {
-        todo!()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Plane {
-    pub id: Id,
-    pub support: Vec3,
-    pub normal: Vec3,
-    pub material: Material,
-}
-
-impl Intersect for Plane {
-    #[inline(always)]
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
-        let denom = ray.direction * self.normal;
-
-        if denom.abs() < 0.0001 {
-            return None;
-        }
-        // let d = -self.support * self.normal;
-        let t = (self.support - ray.origin) * self.normal / denom;
-
-        if t < 0.0001 {
-            return None;
-        } else {
-            return Some(Intersection {
-                distance: t,
-                id: self.id,
-            });
-        }
-    }
-}
-
+use crate::geometry::*;
 pub struct Renderer {
     pub present: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
@@ -161,6 +36,7 @@ pub struct Renderer {
     pub send: Option<crossbeam::channel::Sender<RenderWorkload>>,
     // pub image: Arc<Mutex<Option<ColorImage>>>,
     pub image: GlobalMutImage,
+    pub size: Arc<Mutex<[usize; 2]>>,
     pub avg_rps: Arc<Mutex<(f64, usize)>>,
 }
 
@@ -169,123 +45,57 @@ pub struct Camera {
     pub origin: Vec3,
     pub right: Vec3,
     pub up: Vec3,
-    pub width: f64,
-    pub height: f64,
+    pub width: F,
+    pub height: F,
 }
 
-#[derive(Debug, Clone)]
-pub struct Triangle {}
+// trait Element<T: ?Sized> {
+//     fn insert(&mut self, t: T);
+//     fn get(&self, id: Id) -> Option<&T>;
+//     fn get_mut(&mut self, id: Id) -> Option<&mut T>;
+// }
 
-impl Intersect for Triangle {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
-        todo!()
-    }
-}
+// impl Element<Sphere> for Shapes {
+//     fn insert(&mut self, t: Sphere) {
+//         todo!()
+//     }
 
-#[derive(Debug, Clone)]
-pub struct Cuboid {}
+//     fn get(&self, id: Id) -> Option<&Sphere> {
+//         None
+//     }
 
-impl Intersect for Cuboid {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
-        todo!()
-    }
-}
+//     fn get_mut(&mut self, id: Id) -> Option<&mut Sphere> {
+//         None
+//     }
+// }
 
-#[derive(Debug, Clone)]
-pub struct Shapes {
-    spheres: Vec<Sphere>,
-    planes: Vec<Plane>,
-    triangles: Vec<Triangle>,
-    cuboids: Vec<Cuboid>,
-}
+// impl Element<Plane> for Shapes {
+//     fn insert(&mut self, t: Plane) {
+//         todo!()
+//     }
 
-impl Intersect for Shapes {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
-        let mut closest = Intersection::invalid();
+//     fn get(&self, id: Id) -> Option<&Plane> {
+//         None
+//     }
 
-        for sphere in &self.spheres {
-            if let Some(inters) = sphere.intersect(ray) {
-                if inters < closest {
-                    closest = inters;
-                }
-            }
-        }
+//     fn get_mut(&mut self, id: Id) -> Option<&mut Plane> {
+//         None
+//     }
+// }
 
-        for plane in &self.planes {
-            if let Some(inters) = plane.intersect(ray) {
-                if inters < closest {
-                    closest = inters;
-                }
-            }
-        }
+// impl Element<Box<dyn Intersect>> for Shapes {
+//     fn insert(&mut self, t: Box<dyn Intersect>) {
+//         panic!()
+//     }
 
-        for triangle in &self.triangles {
-            if let Some(inters) = triangle.intersect(ray) {
-                if inters < closest {
-                    closest = inters;
-                }
-            }
-        }
+//     fn get(&self, id: Id) -> Option<&Box<dyn Intersect>> {
+//         None
+//     }
 
-        for cuboid in &self.cuboids {
-            if let Some(inters) = cuboid.intersect(ray) {
-                if inters < closest {
-                    closest = inters;
-                }
-            }
-        }
-
-        closest.wrap()
-    }
-}
-
-trait Element<T: ?Sized> {
-    fn insert(&mut self, t: T);
-    fn get(&self, id: Id) -> Option<&T>;
-    fn get_mut(&mut self, id: Id) -> Option<&mut T>;
-}
-
-impl Element<Sphere> for Shapes {
-    fn insert(&mut self, t: Sphere) {
-        todo!()
-    }
-
-    fn get(&self, id: Id) -> Option<&Sphere> {
-        None
-    }
-
-    fn get_mut(&mut self, id: Id) -> Option<&mut Sphere> {
-        None
-    }
-}
-
-impl Element<Plane> for Shapes {
-    fn insert(&mut self, t: Plane) {
-        todo!()
-    }
-
-    fn get(&self, id: Id) -> Option<&Plane> {
-        None
-    }
-
-    fn get_mut(&mut self, id: Id) -> Option<&mut Plane> {
-        None
-    }
-}
-
-impl Element<Box<dyn Intersect>> for Shapes {
-    fn insert(&mut self, t: Box<dyn Intersect>) {
-        panic!()
-    }
-
-    fn get(&self, id: Id) -> Option<&Box<dyn Intersect>> {
-        None
-    }
-
-    fn get_mut(&mut self, id: Id) -> Option<&mut Box<dyn Intersect>> {
-        None
-    }
-}
+//     fn get_mut(&mut self, id: Id) -> Option<&mut Box<dyn Intersect>> {
+//         None
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct Scene {
@@ -322,7 +132,7 @@ impl Scene {
 impl Intersect for Scene {
     fn intersect(&self, ray: &Ray) -> Option<Intersection> {
         let mut closest: Intersection = Intersection {
-            distance: std::f64::INFINITY,
+            distance: F::INFINITY,
             id: 100,
         };
         for s in &self.spheres {
@@ -341,22 +151,13 @@ impl Intersect for Scene {
             }
         }
 
-        if closest.distance == std::f64::INFINITY {
+        if closest.distance == F::INFINITY {
             None
         } else {
             Some(closest)
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct Material {
-    pub color: Color,
-    pub emmission: f32,
-    pub reflecting: f32,
-    pub diffuse: f32,
-}
-
 #[derive(Debug)]
 pub struct RenderWorkload {
     pub image: crate::image::GlobalMutImage,
@@ -379,8 +180,8 @@ impl RenderWorkload {
 
         let image = unsafe { &mut *self.image.get() as &'a mut Image };
 
-        let camera_dx = 2.0 / image.size[0] as f64;
-        let camera_dy = 2.0 / image.size[1] as f64;
+        let camera_dx = 2.0 / image.size[0] as F;
+        let camera_dy = 2.0 / image.size[1] as F;
 
         for j in self.start.1..=self.end.1 {
             for i in self.start.0..=self.end.0 {
@@ -401,9 +202,9 @@ impl RenderWorkload {
         let mut cast_rays = 0;
 
         for j in self.start.1..=self.end.1 {
-            let camera_y = j as f64 * camera_dy - 1.0;
+            let camera_y = j as F * camera_dy - 1.0;
             for i in self.start.0..=self.end.0 {
-                let camera_x = i as f64 * camera_dx - 1.0;
+                let camera_x = i as F * camera_dx - 1.0;
 
                 let ray_direction = direction - dy * camera_y + dx * camera_x;
 
@@ -419,8 +220,8 @@ impl RenderWorkload {
                     color += c;
                     cast_rays += 1;
                 }
-                color *= 1.0 / (scene.num_samples as f32);
-                image[(i, j)] = color.into();
+                color *= 1.0 / (scene.num_samples as F);
+                image[(i, j)] = color.gamma().into();
                 // stage.store(j * image.dimension[1] + i, Ordering::Release);
             }
         }
@@ -438,9 +239,13 @@ impl Renderer {
         let stage = Arc::new(AtomicUsize::new(0));
         let scene = Arc::new(RwLock::new(scene.clone()));
         let image = Arc::new(UnsafeCell::new(Image::new([
-            crate::IMAGE_WIDTH,
-            crate::IMAGE_HEIGHT,
+            crate::DEFAULT_IMAGE_WIDTH,
+            crate::DEFAULT_IMAGE_HEIGHT,
         ])));
+        let size = Arc::new(Mutex::new([
+            crate::DEFAULT_IMAGE_WIDTH,
+            crate::DEFAULT_IMAGE_HEIGHT,
+        ]));
 
         let avg_rps = Arc::new(Mutex::new((0.0 as f64, 0 as usize)));
 
@@ -541,6 +346,7 @@ impl Renderer {
 
         Renderer {
             image,
+            size,
             present,
             running,
             workload,
@@ -559,6 +365,10 @@ impl Renderer {
             println!("Avg rps per thread: {} ({} samples)", lock.0, lock.1);
         }*/
 
+        unsafe {
+            *(self.image.get()) = Image::new(*self.size.lock());
+        }
+
         match self.scene.write() {
             Ok(mut lock) => {
                 *lock = scene.clone();
@@ -569,11 +379,15 @@ impl Renderer {
         // let image = Arc::new(UnsafeCell::new(Image::new([0, 0])));
 
         let mut workloads = Vec::with_capacity(10);
+        let (width, height) = {
+            let lock = self.size.lock();
+            (lock[0], lock[1])
+        };
 
         const SIZE_X: usize = 8;
         const SIZE_Y: usize = 8;
-        for j in (0..IMAGE_HEIGHT).array_chunks::<SIZE_Y>() {
-            for i in (0..IMAGE_WIDTH).array_chunks::<SIZE_X>() {
+        for j in (0..=height).array_chunks::<SIZE_Y>() {
+            for i in (0..=width).array_chunks::<SIZE_X>() {
                 workloads.push(RenderWorkload {
                     image: self.image.clone(),
                     start: (*i.first().unwrap(), *j.first().unwrap()),
@@ -605,39 +419,78 @@ impl Renderer {
             let hit = scene.get_info(ray, &closest);
 
             // assert_eq!(hit.normal, Vec3::new(0.0, 0.0, 1.0));
-
-            if !(hit.normal.len() <= 1.1) || !(hit.normal.len() >= 0.9) {
-                println!("outlier: {:?}, {}", hit.normal, hit.normal.len());
-            }
             let emmission = hit.material.color * hit.material.emmission;
+            let reflecting_direction = (-ray.direction).reflect(hit.normal);
             if n == 0 {
                 // terminate recursion
-                hit.material.color * scene.ambient.color * scene.ambient.emmission + emmission
+                // hit.material.color * scene.ambient.color * scene.ambient.emmission + emmission
+                Color::BLACK
+                /*scene.ambient.color
+                * hit.material.color
+                * Renderer::brdf(
+                    reflecting_direction,
+                    -ray.direction,
+                    hit.normal,
+                    hit.material.reflecting as f64,
+                    hit.material.diffuse as f64,
+                )
+                + emmission*/
             } else {
-                let reflecting_direction = (-ray.direction).reflect(hit.normal);
-                if !(reflecting_direction.len() <= 1.1) || !(reflecting_direction.len() >= 0.9) {
-                    println!("original:  {:?}, {}", ray.direction, ray.direction.len());
-                    println!("normal:    {:?}, {}", hit.normal, hit.normal.len());
-                    println!(
-                        "reflected: {:?}, {}",
-                        reflecting_direction,
-                        reflecting_direction.len()
-                    );
-                }
-
-                const NUM_CASTS: usize = 10;
+                // const NUM_CASTS: usize = 10;
                 let mut average_color = Color::BLACK;
 
-                let casts = [
-                    reflecting_direction,
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
-                    Vec3::random_on_hemisphere(hit.normal),
+                if hit.material.reflecting > 0.0 {
+                    let r = Ray {
+                        origin: pos,
+                        direction: reflecting_direction,
+                    };
+                    let color_incoming = Renderer::cast(scene, &r, n - 1);
+
+                    average_color += color_incoming
+                        * Self::reflecting_brdf(
+                            reflecting_direction,
+                            -ray.direction,
+                            hit.normal,
+                            hit.material.reflecting as F,
+                            hit.material.diffuse as F,
+                        )
+                        * (reflecting_direction * hit.normal)
+                        * hit.material.reflecting as F
+                        * F::TAU;
+                }
+
+                if hit.material.diffuse > 0.0 {
+                    let r = Ray {
+                        origin: pos,
+                        direction: Vec3::random_on_hemisphere(hit.normal).normalized(),
+                    };
+                    let color_incoming = Renderer::cast(scene, &r, n - 1);
+
+                    average_color += color_incoming
+                        * Self::diffuse_brdf(
+                            r.direction,
+                            -ray.direction,
+                            hit.normal,
+                            hit.material.reflecting as F,
+                            hit.material.diffuse as F,
+                        )
+                        * (r.direction * hit.normal)
+                        * hit.material.diffuse as F
+                        * F::TAU;
+                }
+
+                /*let casts = [
+                    Vec3::random_on_hemisphere(hit.normal)
+                        .lerp(reflecting_direction, hit.material.reflecting as f64)
+                        .normalized(),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
+                    // Vec3::random_on_hemisphere(hit.normal),
                 ];
 
                 let dw = 2.0 * std::f64::consts::PI / (casts.len() as f64);
@@ -665,11 +518,10 @@ impl Renderer {
                             hit.normal,
                             hit.material.reflecting as f64,
                             hit.material.diffuse as f64,
-                            dw,
                         )
                         * (cast * hit.normal)
                         * dw;
-                }
+                }*/
 
                 // let attenuation = primary_dir * r.direction;
 
@@ -681,31 +533,57 @@ impl Renderer {
         }
     }
 
-    pub fn brdf(
+    pub fn reflecting_brdf(
+        incoming: Vec3,
+        outgoing: Vec3,
+        normal: Vec3,
+        reflecting: F,
+        diffuse: F,
+    ) -> F {
+        if incoming.reflect(normal) * outgoing >= 0.99 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    pub fn diffuse_brdf(
+        incoming: Vec3,
+        outgoing: Vec3,
+        normal: Vec3,
+        reflecting: F,
+        diffuse: F,
+    ) -> F {
+        F::FRAC_1_PI
+    }
+
+    /*pub fn brdf(
         incoming: Vec3,
         outgoing: Vec3,
         normal: Vec3,
         reflecting: f64,
         diffuse: f64,
-        dw: f64,
     ) -> f64 {
-        let direct = incoming.reflect(normal) * outgoing >= 0.99;
-        let reflecting_component = if direct {
+        // let direct = incoming.reflect(normal) * outgoing >= 0.8;
+        /*let reflecting_component = if direct {
             // let fresnel = reflecting + (1.0 - reflecting)
             // println!("REFLECTING!");
             let val = 1.0 / ((incoming * outgoing).abs());
+            assert!(!val.is_infinite());
+            assert!(!val.is_nan());
             assert!(val > 0.0);
             val
         } else {
             0.0
-        };
-        let diffuse_component = if direct {
+        };*/
+        let reflecting_component: f64 = 1.0 / ((incoming * outgoing).abs());
+        let diffuse_component = /*if direct {
             0.0
-        } else {
+        } else {*/
             1.0 / std::f64::consts::PI
-        };
+        ;
         return reflecting_component * reflecting + diffuse_component * diffuse;
-    }
+    }*/
 }
 
 impl Drop for Renderer {
