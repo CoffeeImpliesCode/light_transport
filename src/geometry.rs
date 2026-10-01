@@ -1,5 +1,5 @@
-use crate::math::{Vec3, F};
 use crate::material::Material;
+use crate::math::{Vec3, F};
 
 type Id = usize;
 
@@ -41,20 +41,37 @@ impl Intersect for Sphere {
     #[inline(always)]
     fn intersect(&self, ray: &Ray) -> Option<Intersection> {
         let m = ray.origin - self.center;
+        let a = ray.direction * ray.direction;
         let b = m * ray.direction;
         let c = m * m - self.radius * self.radius;
 
-        if c > 0.0 && b > 0.0 {
+        if a <= 0.0 {
             return None;
         }
-        let discriminant = b * b - c;
+
+        let discriminant = b * b - a * c;
 
         if discriminant < 0.0 {
             return None;
         }
 
+        let root = discriminant.sqrt();
+        let near = (-b - root) / a;
+        let far = (-b + root) / a;
+
+        // The origin may sit inside the sphere, so the near root can be
+        // negative. Keep the smallest strictly positive root and drop
+        // geometry behind the ray.
+        let distance = if near > 0.0 {
+            near
+        } else if far > 0.0 {
+            far
+        } else {
+            return None;
+        };
+
         return Some(Intersection {
-            distance: -b - discriminant.sqrt(),
+            distance,
             id: self.id,
         });
     }

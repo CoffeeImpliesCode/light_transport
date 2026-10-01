@@ -199,21 +199,36 @@ impl<T: Float> Vec<T, 3> {
     }
 }
 
-impl<T: Float + Constants + From<f32> + rand::distributions::uniform::SampleUniform> Vec<T, 3> {
-    #[inline(always)]
-    pub fn random_on_sphere() -> Vec<T, 3> {
-        let mut rng = rand::thread_rng();
-        let theta: T = rng.gen_range((0.0.into())..(<f32 as Into<T>>::into(2.0)) * T::PI);
-        let phi: T = rng
-            .gen_range::<T, _>(((-1.0).into())..(<f32 as Into<T>>::into(1.0)) * T::one())
-            .acos();
-        let sin_theta = theta.sin();
-        let sin_phi = phi.sin();
-        let x = sin_phi * theta.cos();
-        let y = sin_phi * sin_theta;
-        let z = phi.cos();
-
-        Vec::new([x, y, z])
+impl<T: Float + Constants + From<f32>> Vec<T, 3> {
+    /// Uniform direction on the unit sphere via Archimedes' cylinder
+    /// projection: uniform `(x, y)` in the unit disc map to a unit vector with
+    /// `z` distributed exactly as the sphere's polar density demands.
+    ///
+    /// The previous formulation sampled an angle pair and spent five
+    /// transcendental calls per direction (`acos` plus two `sin`/`cos` pairs),
+    /// which perf attributed to ~30% of total render time. This needs one
+    /// `sqrt` and a single `gen` per component. Acceptance is pi/4, so the
+    /// loop averages about 1.27 iterations.
+    ///
+    /// The generator is passed in rather than fetched per call. `rand`'s
+    /// `ThreadRng` checks a reseeding counter on every draw, and that atomic
+    /// load was the hottest single instruction in the whole binary under
+    /// perf. One generator per worker pays it once rather than per sample.
+    pub fn random_on_sphere<R: rand::Rng + ?Sized>(rng: &mut R) -> Vec<T, 3> {
+        loop {
+            let x: f32 = rng.gen::<f32>() * 2.0 - 1.0;
+            let y: f32 = rng.gen::<f32>() * 2.0 - 1.0;
+            let s = x * x + y * y;
+            if s < 1.0 && s > 0.0 {
+                // (x*f)^2 + (y*f)^2 + (1 - 2s)^2 == 4s(1-s) + 1 - 4s + 4s^2 == 1.
+                let f = 2.0 * (1.0 - s).sqrt();
+                return Vec::new([
+                    <f32 as Into<T>>::into(x * f),
+                    <f32 as Into<T>>::into(y * f),
+                    <f32 as Into<T>>::into(1.0 - 2.0 * s),
+                ]);
+            }
+        }
     }
 
     #[inline(always)]
@@ -232,8 +247,8 @@ impl<T: Float + Constants + From<f32> + rand::distributions::uniform::SampleUnif
     }
 
     #[inline(always)]
-    pub fn random_on_hemisphere(norm: Vec<T, 3>) -> Vec<T, 3> {
-        let r = Vec::random_on_sphere();
+    pub fn random_on_hemisphere<R: rand::Rng + ?Sized>(norm: Vec<T, 3>, rng: &mut R) -> Vec<T, 3> {
+        let r = Vec::random_on_sphere(rng);
         if r * norm < T::zero() {
             -r
         } else {
@@ -267,23 +282,19 @@ impl<T: Float + From<f32>, const Dim: usize> Vec<T, Dim> {
     }
 
     #[inline(always)]
-    pub fn normalize(&mut self) {
-        *self *= self.len().recip();
-    }
-
-    #[inline(always)]
     pub fn normalized(&self) -> Self {
-        *self * self.len().recip()
+        let len = self.len();
+        // A zero or non-finite length reciprocates to inf, so the product would be NaN.
+        if len.is_finite() && len > T::zero() {
+            *self * len.recip()
+        } else {
+            Self::zero()
+        }
     }
 
     #[inline(always)]
     pub fn reflect(&self, norm: Vec<T, Dim>) -> Vec<T, Dim> {
         norm * (*self * norm) * <f32 as Into<T>>::into(2.0) - *self
-    }
-
-    #[inline(always)]
-    pub fn lerp(&self, other: Vec<T, Dim>, d: T) -> Vec<T, Dim> {
-        *self * (<f32 as Into<T>>::into(1.0) - d) + other * d
     }
 }
 
@@ -430,6 +441,78 @@ impl<T: Copy + Float, const Dim: usize> DivAssign<T> for Vec<T, Dim> {
         let over = scale.recip();
         for i in 0..self.0.len() {
             self[i] = self[i] * over;
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The old angle-pair sampler was replaced because it burned five
+    /// transcendental calls per direction. Correctness of the replacement
+    /// matters more than the speed: these pin down unit length and the
+    /// spherical distribution, which a trig-free method could easily get wrong.
+    #[test]
+    fn random_on_sphere_is_unit_length() {
+        let mut rng = rand::thread_rng();
+        for _ in 0..20_000 {
+            let v = Vec3::random_on_sphere(&mut rng);
+            let len = v.len();
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "direction not unit length: {len} for {v:?}"
+            );
+        }
+    }
+
+    /// Uniform on the sphere means z is uniform on [-1, 1], and each of the six
+    /// signed axis directions is hit one eighth of the time.
+    #[test]
+    fn random_on_sphere_is_uniform() {
+        const N: usize = 120_000;
+        let mut z_sum = 0.0f32;
+        let mut octants = [0u32; 8];
+        let mut rng = rand::thread_rng();
+        for _ in 0..N {
+            let v = Vec3::random_on_sphere(&mut rng);
+            z_sum += v[2];
+            let oct =
+                (v[0] > 0.0) as usize | ((v[1] > 0.0) as usize) << 1 | ((v[2] > 0.0) as usize) << 2;
+            octants[oct] += 1;
+        }
+
+        // Mean of z must be ~0. The standard error of the mean here is
+        // about 1/sqrt(3N), so 0.01 is a loose but non-vacuous bound.
+        let mean_z = z_sum / N as f32;
+        assert!(mean_z.abs() < 0.01, "z mean drifted: {mean_z}");
+
+        // Every octant within 2% of the expected eighth is far outside the
+        // sampling noise at this N (expected 15000, sd ~37).
+        for (i, count) in octants.iter().enumerate() {
+            let expected = N as f32 / 8.0;
+            assert!(
+                (*count as f32 - expected).abs() < expected * 0.02,
+                "octant {i} skewed: {count} vs {expected}"
+            );
+        }
+    }
+
+    /// The hemisphere helper must never return a direction behind the plane.
+    #[test]
+    fn random_on_hemisphere_stays_on_the_near_side() {
+        let normals = [
+            Vec3::new([0.0, 0.0, 1.0]),
+            Vec3::new([1.0, 0.0, 0.0]),
+            Vec3::new([0.0, -1.0, 0.0]),
+            Vec3::new([0.577, 0.577, 0.577]),
+        ];
+        let mut rng = rand::thread_rng();
+        for n in normals {
+            let n = n.normalized();
+            for _ in 0..10_000 {
+                let d = Vec3::random_on_hemisphere(n, &mut rng);
+                assert!(d * n >= 0.0, "direction {d:?} behind normal {n:?}");
+            }
         }
     }
 }

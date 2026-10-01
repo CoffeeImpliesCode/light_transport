@@ -1,16 +1,15 @@
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui::{self, Sense};
 use eframe::egui::{Separator, Slider, Visuals};
-use eframe::epaint::color::Hsva;
-use eframe::epaint::{Color32, ColorImage, Vec2};
+use eframe::epaint::ecolor::Hsva;
+use eframe::epaint::{Color32, ColorImage};
 use egui::mutex::Mutex;
-use egui::Key;
 use rand::Rng;
 
 use crate::geometry::{Plane, Sphere};
-use crate::image::{Color, Image};
+use crate::image::Color;
 use crate::material::Material;
 use crate::math::{Vec3, F};
 use crate::renderer::{Camera, Renderer, Scene};
@@ -29,8 +28,7 @@ pub struct LightTransport {
 
 impl LightTransport {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let gl = cc.gl.as_ref(); // .expect("Run with glow backend!");
-
+        let _gl = cc.gl.as_ref(); // .expect("Run with glow backend!");
         let image = ColorImage::new(
             [crate::DEFAULT_IMAGE_WIDTH, crate::DEFAULT_IMAGE_HEIGHT],
             Color32::from_rgb(0, 0, 0),
@@ -40,7 +38,7 @@ impl LightTransport {
         let texture_handle = cc.egui_ctx.load_texture(
             "render",
             image, // egui::ColorImage::from_rgba_unmultiplied(image.dimension, image.bytes()),
-            egui::TextureFilter::Nearest,
+            egui::TextureOptions::NEAREST,
         );
 
         let mut rng = rand::thread_rng();
@@ -197,8 +195,8 @@ impl eframe::App for LightTransport {
         vis.dark_mode = true;
         ctx.set_visuals(vis);
 
-        let secs_since_start = Instant::now().duration_since(self.begin).as_secs_f64();
-        let secs_since_last = Instant::now().duration_since(self.last).as_secs_f64();
+        let _secs_since_start = Instant::now().duration_since(self.begin).as_secs_f64();
+        let _secs_since_last = Instant::now().duration_since(self.last).as_secs_f64();
 
         /*if secs_since_start > 3.0 {
             frame.quit();
@@ -206,11 +204,12 @@ impl eframe::App for LightTransport {
 
         // puffin_egui::profiler_window(ctx);
         {
+            // Pick up finished tiles before reading the image, so the frame
+            // shows everything the workers have done so far.
+            self.renderer.drain();
             let image = self.renderer.take_image();
-            self.texture_handle.set(image, egui::TextureFilter::Linear);
-            /*if self.renderer.send.as_ref().unwrap().is_empty() {
-                self.renderer.render(&self.scene.lock());
-            }*/
+
+            self.texture_handle.set(image, egui::TextureOptions::LINEAR);
         }
         /*
         if self.renderer.present.swap(false, Ordering::SeqCst) {
@@ -227,7 +226,7 @@ impl eframe::App for LightTransport {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let drag_delta = ui
-                    .image(self.texture_handle.id(), Vec2::new(1000.0, 1000.0))
+                    .image(&self.texture_handle)
                     .interact(Sense::drag())
                     .drag_delta();
                 if ui.button("Render").clicked() {
@@ -244,9 +243,14 @@ impl eframe::App for LightTransport {
 
                     let r = r * dx.cos() + u.cross(r) * dx.sin() + u * (u * r) * (1.0 - dx.cos());
 
-                    scene.camera.right = r;
-
                     let u = u * dy.cos() + r.cross(u) * dy.sin() + r * (r * u) * (1.0 - dy.cos());
+
+                    // Gram-Schmidt. Rodrigues keeps the basis orthonormal on
+                    // its own, but rounding makes it drift over many drags.
+                    let r = r.normalized();
+                    let u = (u - r * (u * r)).normalized();
+
+                    scene.camera.right = r;
 
                     scene.camera.up = u;
 
@@ -255,34 +259,34 @@ impl eframe::App for LightTransport {
                     let dir = up.cross(right).normalized();
 
                     {
-                        let input = ctx.input();
+                        // let input = ctx.input();
 
-                        if input.key_down(Key::W) {
-                            scene.camera.origin += dir * 0.02;
-                        }
-                        if input.key_down(Key::S) {
-                            scene.camera.origin -= dir * 0.02;
-                        }
-                        if input.key_down(Key::A) {
-                            scene.camera.origin -= right * 0.02;
-                        }
-                        if input.key_down(Key::D) {
-                            scene.camera.origin += right * 0.02;
-                        }
-                        if input.key_down(Key::Q) {
-                            scene.camera.origin += up * 0.02;
-                        }
-                        if input.key_down(Key::E) {
-                            scene.camera.origin -= up * 0.02;
-                        }
-                        if input.key_down(Key::Escape) {
-                            frame.close();
-                        }
-                        if input.key_down(Key::R) {
-                            let mut lock = self.renderer.avg_rps.lock();
-                            lock.0 = 0.0;
-                            lock.1 = 0;
-                        }
+                        // if input.key_down(Key::W) {
+                        //     scene.camera.origin += dir * 0.02;
+                        // }
+                        // if input.key_down(Key::S) {
+                        //     scene.camera.origin -= dir * 0.02;
+                        // }
+                        // if input.key_down(Key::A) {
+                        //     scene.camera.origin -= right * 0.02;
+                        // }
+                        // if input.key_down(Key::D) {
+                        //     scene.camera.origin += right * 0.02;
+                        // }
+                        // if input.key_down(Key::Q) {
+                        //     scene.camera.origin += up * 0.02;
+                        // }
+                        // if input.key_down(Key::E) {
+                        //     scene.camera.origin -= up * 0.02;
+                        // }
+                        // if input.key_down(Key::Escape) {
+                        //     // frame.close();
+                        // }
+                        // if input.key_down(Key::R) {
+                        //     let mut lock = self.renderer.avg_rps.lock();
+                        //     lock.0 = 0.0;
+                        //     lock.1 = 0;
+                        // }
                     }
 
                     /*scene.light = Vec3::new(
@@ -390,5 +394,5 @@ impl eframe::App for LightTransport {
         ctx.request_repaint();
     }
 
-    fn on_exit(&mut self, gl: Option<&glow::Context>) {}
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}
 }

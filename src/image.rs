@@ -1,7 +1,6 @@
 use core::slice;
 use std::{
-    cell::UnsafeCell,
-    ops::{Add, AddAssign, Deref, DerefMut, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
+    ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
     sync::Arc,
 };
 
@@ -9,7 +8,15 @@ use eframe::epaint::Color32;
 use rand::Rng;
 
 pub type GlobalImage = Arc<Image>;
-pub type GlobalMutImage = Arc<UnsafeCell<Image>>;
+
+// The render path reinterprets the RGBA buffer as raw bytes and as egui Color32.
+// That is only sound while the two layouts coincide, so pin the layout at
+// compile time: a layout change becomes a build error instead of undefined
+// behavior.
+const _: () = assert!(std::mem::size_of::<RGBA>() == 4);
+const _: () = assert!(std::mem::size_of::<Color32>() == 4);
+const _: () = assert!(std::mem::align_of::<RGBA>() == 1);
+const _: () = assert!(std::mem::align_of::<Color32>() == 1);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -31,33 +38,64 @@ impl Color {
         Color([r, g, b, 1.0])
     }
 
+    /// Opaque color from a hue in [0, 1), a saturation in [0, 1] and a
+    /// lightness in [0, 1]. The hue wraps, so 1.0 is the same as 0.0.
     #[inline(always)]
     pub fn hsl(h: f32, g: f32, b: f32) -> Self {
-        unimplemented!()
+        Self::hsla(h, g, b, 1.0)
     }
 
+    /// Same as [`Color::hsl`], with `a` as the opacity in [0, 1].
     #[inline(always)]
     pub fn hsla(h: f32, g: f32, b: f32, a: f32) -> Self {
-        unimplemented!()
+        let s = g.clamp(0.0, 1.0);
+        let l = b.clamp(0.0, 1.0);
+        let hue = h.rem_euclid(1.0) * 6.0;
+
+        let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+        let x = c * (1.0 - (hue % 2.0 - 1.0).abs());
+        let m = l - c / 2.0;
+
+        // `hue` is in [0, 6), so the cast truncates to a sector in 0..=5.
+        let (r, gg, bb) = match hue as u32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+
+        // Rounding can push a channel a hair outside [0, 1] at the corners
+        // of the cube, so clamp rather than hand out a negative color.
+        Color::new(
+            (r + m).clamp(0.0, 1.0),
+            (gg + m).clamp(0.0, 1.0),
+            (bb + m).clamp(0.0, 1.0),
+            a,
+        )
     }
 
+    /// Apply the gamma curve to the color channels. Alpha is opacity, not
+    /// radiance, so it passes through untouched.
     #[inline(always)]
     pub fn gamma(&self) -> Self {
         Color([
             self[0].powf(2.2),
             self[1].powf(2.2),
             self[2].powf(2.2),
-            self[3].powf(2.2),
+            self[3],
         ])
     }
 
+    /// Inverse of [`Color::gamma`]. Alpha passes through untouched.
     #[inline(always)]
     pub fn ungamma(&self) -> Self {
         Color([
             self[0].powf(1.0 / 2.2),
             self[1].powf(1.0 / 2.2),
             self[2].powf(1.0 / 2.2),
-            self[3].powf(1.0 / 2.2),
+            self[3],
         ])
     }
 
@@ -314,5 +352,58 @@ impl IndexMut<(usize, usize)> for Image {
     fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
         let offset = index.1 * self.size[0] + index.0;
         &mut self.pixels[offset]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: Color, b: Color) -> bool {
+        (0..4).all(|i| (a[i] - b[i]).abs() < 1e-5)
+    }
+
+    #[test]
+    fn gamma_leaves_alpha_alone() {
+        let c = Color::new(0.5, 0.5, 0.5, 0.25);
+        assert!(close(
+            c.gamma(),
+            Color::new(0.5f32.powf(2.2), 0.5f32.powf(2.2), 0.5f32.powf(2.2), 0.25)
+        ));
+        assert!(close(c.gamma().ungamma(), Color::new(0.5, 0.5, 0.5, 0.25)));
+    }
+
+    #[test]
+    fn hsl_builds_primaries_and_wraps() {
+        assert!(close(Color::hsl(0.0, 1.0, 0.5), Color::RED));
+        assert!(close(Color::hsl(1.0 / 3.0, 1.0, 0.5), Color::GREEN));
+        assert!(close(Color::hsl(2.0 / 3.0, 1.0, 0.5), Color::BLUE));
+        assert!(close(Color::hsl(1.0, 1.0, 0.5), Color::RED));
+        assert!(close(Color::hsl(0.0, 0.0, 0.0), Color::BLACK));
+        assert!(close(Color::hsl(0.0, 0.0, 1.0), Color::WHITE));
+    }
+
+    #[test]
+    fn hsla_keeps_opacity() {
+        let c = Color::hsla(0.0, 1.0, 0.5, 0.5);
+        assert!(close(c, Color::new(1.0, 0.0, 0.0, 0.5)));
+    }
+
+    #[test]
+    fn hsl_stays_in_the_unit_cube() {
+        for i in 0..=60 {
+            for j in 0..=20 {
+                for k in 0..=20 {
+                    let c = Color::hsl(i as f32 / 60.0, j as f32 / 20.0, k as f32 / 20.0);
+                    for ch in 0..4 {
+                        assert!(
+                            (0.0..=1.0).contains(&c[ch]),
+                            "channel {ch} out of range: {} at {c:?}",
+                            c[ch]
+                        );
+                    }
+                }
+            }
+        }
     }
 }
