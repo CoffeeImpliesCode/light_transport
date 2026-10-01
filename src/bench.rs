@@ -73,6 +73,31 @@
 //! bigger than anything above, and both have to keep the render bit-exact,
 //! which the `--serial --out` oracle is there to check.
 //!
+//! ### `-C target-cpu=native`: measured, directionally positive, not applied
+//!
+//! The release profile compiles for baseline x86-64, which on this machine
+//! means SSE2 and no FMA, even though the CPU has both AVX2 and FMA.
+//! Building with `-C target-cpu=native` renders **bit-identically** — no FMA
+//! contraction crept into the arithmetic — and came out faster by median in
+//! all three measurement sessions: 4%, 5.8% and 6.3%.
+//!
+//! It was not applied, because none of those three reached significance. The
+//! verdict was `inconclusive` every time; at fourteen reps the medians
+//! differed by 6.3% against standard deviations of 11.5% and 13.4%, on a box
+//! sitting at load 8 to 33 on twelve threads. A consistent direction is not a
+//! measurement.
+//!
+//! It is also a portability trade: a `native` binary will not start on a
+//! pre-AVX2 machine. Paying that for an effect that could not be proven here
+//! is the wrong order of decisions. If the machine ever goes quiet, this is
+//! the first thing to re-test, and `--compare` is what to test it with:
+//!
+//! ```text
+//! RUSTFLAGS="-C target-cpu=native" cargo build --release
+//! ./target/release/light_transport --bench --serial --reps 14 \
+//!     --compare /path/to/the/default-codegen-binary
+//! ```
+//!
 //! To reproduce the ranking:
 //!
 //! ```text
