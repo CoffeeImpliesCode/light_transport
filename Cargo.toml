@@ -12,3 +12,16 @@ rand = "0.10"
 crossbeam = "0.8.5"
 num_cpus = "1.17"
 num = "0.4.3"
+
+# `perf report` can only attribute samples to source lines if the binary
+# carries line tables. Putting them in `release` costs 13.8 MB -> 77 MB for a
+# binary that ships, so they live in a profile the shipped build never uses:
+#
+#     cargo build --profile profiling
+#     perf record -F 999 -e cycles:u -g -- \
+#         target/profiling/light_transport --bench --serial
+#
+# Stripped of it, `release` is 13.8 MB.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"

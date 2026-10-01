@@ -1,6 +1,7 @@
 use std::io::Write;
 
 mod app;
+mod bench;
 mod geometry;
 mod image;
 mod material;
@@ -15,6 +16,13 @@ const DEFAULT_IMAGE_WIDTH: usize = 512;
 const DEFAULT_IMAGE_HEIGHT: usize = 512;
 
 fn main() {
+    // `--bench` is a headless render benchmark, so it runs before anything
+    // touches the window system or writes into `tests/`.
+    if let Some(opts) = bench::take_command_line() {
+        bench::run(&opts);
+        return;
+    }
+
     let mut random_on_sphere = std::fs::File::create("tests/random_on_hemisphere.csv").unwrap();
     let norm = Vec3::new([0.0, 1.0, 1.0]);
     writeln!(&mut random_on_sphere, "X,Y,Z").unwrap();

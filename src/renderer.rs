@@ -474,23 +474,7 @@ impl Renderer {
     }
 
     fn blit(&mut self, chunk: &RenderChunk) {
-        let (x0, y0) = chunk.start;
-        let (x1, y1) = chunk.end;
-        let (width, height) = (self.image.size[0], self.image.size[1]);
-
-        // A tile that does not fit belongs to an earlier pass rendered at a
-        // larger size. Dropping it keeps the stale pixels out of the image.
-        if x0 >= width || y0 >= height || x1 >= width || y1 >= height {
-            return;
-        }
-
-        let chunk_width = x1 - x0 + 1;
-        for (row, y) in (y0..=y1).enumerate() {
-            let src = row * chunk_width;
-            let dst = y * width + x0;
-            self.image.pixels[dst..dst + chunk_width]
-                .copy_from_slice(&chunk.pixels[src..src + chunk_width]);
-        }
+        blit_chunk(&mut self.image, chunk);
     }
 
     pub fn take_image(&mut self) -> ColorImage {
@@ -671,6 +655,119 @@ impl Renderer {
         ;
         return reflecting_component * reflecting + diffuse_component * diffuse;
     }*/
+}
+
+/// Copy one finished tile into the image.
+///
+/// A tile that does not fit belongs to an earlier pass rendered at a larger
+/// size. Dropping it keeps the stale pixels out of the image.
+pub fn blit_chunk(image: &mut Image, chunk: &RenderChunk) {
+    let (x0, y0) = chunk.start;
+    let (x1, y1) = chunk.end;
+    let (width, height) = (image.size[0], image.size[1]);
+
+    if x0 >= width || y0 >= height || x1 >= width || y1 >= height {
+        return;
+    }
+
+    let chunk_width = x1 - x0 + 1;
+    for (row, y) in (y0..=y1).enumerate() {
+        let src = row * chunk_width;
+        let dst = y * width + x0;
+        image.pixels[dst..dst + chunk_width].copy_from_slice(&chunk.pixels[src..src + chunk_width]);
+    }
+}
+
+/// The scene the app builds and the benchmark renders: five spheres, five
+/// planes, an emitter at the origin and a 512x512 camera. Kept in one place so
+/// the GUI and the headless benchmark cannot drift apart.
+pub fn demo_scene(num_samples: usize, num_bounces: usize) -> Scene {
+    fn mat(r: F, g: F, b: F, e: F, refl: F, diff: F) -> Material {
+        Material {
+            color: Color::new(r, g, b, 1.0),
+            emmission: e,
+            reflecting: refl,
+            diffuse: diff,
+        }
+    }
+
+    Scene {
+        camera: Camera {
+            origin: Vec3::new([-5.0, 0.0, 0.0]),
+            right: Vec3::new([0.0, -1.0, 0.0]),
+            up: Vec3::new([0.0, 0.0, 1.0]),
+            width: 0.5,
+            height: 0.5,
+        },
+        spheres: vec![
+            Sphere {
+                id: 0,
+                center: Vec3::new([-0.2, 0.1, 0.3]),
+                radius: 0.25,
+                material: mat(0.8, 0.2, 0.2, 0.0, 0.3, 0.7),
+            },
+            Sphere {
+                id: 1,
+                center: Vec3::new([0.3, -0.2, 0.1]),
+                radius: 0.2,
+                material: mat(0.2, 0.8, 0.3, 0.0, 0.5, 0.5),
+            },
+            Sphere {
+                id: 2,
+                center: Vec3::new([0.1, 0.35, -0.15]),
+                radius: 0.18,
+                material: mat(0.2, 0.3, 0.9, 0.0, 0.1, 0.9),
+            },
+            Sphere {
+                id: 3,
+                center: Vec3::new([-0.35, -0.3, -0.25]),
+                radius: 0.22,
+                material: mat(0.9, 0.9, 0.2, 0.0, 0.8, 0.2),
+            },
+            Sphere {
+                id: 4,
+                center: Vec3::new([0.0, 0.0, 0.0]),
+                radius: 0.2,
+                material: mat(1.0, 1.0, 1.0, 1.0, 0.5, 0.5),
+            },
+        ],
+        planes: vec![
+            Plane {
+                id: 100,
+                support: Vec3::new([0.0, 0.0, -0.5]),
+                normal: Vec3::new([0.0, 0.0, 1.0]),
+                material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
+            },
+            Plane {
+                id: 101,
+                support: Vec3::new([0.0, -1.0, 0.0]),
+                normal: Vec3::new([0.0, 1.0, 0.0]),
+                material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
+            },
+            Plane {
+                id: 102,
+                support: Vec3::new([1.0, 0.0, 0.0]),
+                normal: Vec3::new([-1.0, 0.0, 0.0]),
+                material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
+            },
+            Plane {
+                id: 103,
+                support: Vec3::new([-10.0, 0.0, 0.0]),
+                normal: Vec3::new([1.0, 0.0, 0.0]),
+                material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
+            },
+            Plane {
+                id: 104,
+                support: Vec3::new([0.0, 1.0, 0.0]),
+                normal: Vec3::new([0.0, -1.0, 0.0]),
+                material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
+            },
+        ],
+        light: Vec3::new([0.0, 0.0, 0.0]),
+        ambient: mat(0.1, 0.1, 0.1, 1.0, 0.0, 0.0),
+        num_bounces,
+        num_samples,
+    }
 }
 
 impl Drop for Renderer {
@@ -897,9 +994,17 @@ mod tests {
         assert_eq!(renderer.image[(2, 2)], RGBA::new(0, 0, 0, 255));
     }
 
-    /// Profiling harness for the Render button, mirroring the scene the app
-    /// builds in `app.rs`. Ignored by default because it is a benchmark, not a
-    /// correctness test. Run it under a profiler with:
+    /// The same workload as the headless `--bench` mode, driven through
+    /// `cargo test` instead of the binary. Ignored by default because it is a
+    /// benchmark, not a correctness test.
+    ///
+    /// Prefer the binary for measurement — it reports best/mean/median and
+    /// can write the image out for a before/after diff:
+    ///
+    ///     cargo run --release -- --bench
+    ///     cargo run --release -- --bench --serial --out before.ppm
+    ///
+    /// This form stays for `cargo test`-driven profiling:
     ///
     ///     cargo test --release -- --ignored --nocapture bench_render_action
     ///
@@ -907,15 +1012,6 @@ mod tests {
     #[test]
     #[ignore = "profiling harness; run explicitly with --ignored"]
     fn bench_render_action() {
-        fn mat(r: F, g: F, b: F, e: F, refl: F, diff: F) -> Material {
-            Material {
-                color: Color::new(r, g, b, 1.0),
-                emmission: e,
-                reflecting: refl,
-                diffuse: diff,
-            }
-        }
-
         let samples: usize = std::env::var("BENCH_SAMPLES")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -925,83 +1021,9 @@ mod tests {
             .and_then(|v| v.parse().ok())
             .unwrap_or(5);
 
-        let scene = Scene {
-            camera: Camera {
-                origin: Vec3::new([-5.0, 0.0, 0.0]),
-                right: Vec3::new([0.0, -1.0, 0.0]),
-                up: Vec3::new([0.0, 0.0, 1.0]),
-                width: 0.5,
-                height: 0.5,
-            },
-            spheres: vec![
-                Sphere {
-                    id: 0,
-                    center: Vec3::new([-0.2, 0.1, 0.3]),
-                    radius: 0.25,
-                    material: mat(0.8, 0.2, 0.2, 0.0, 0.3, 0.7),
-                },
-                Sphere {
-                    id: 1,
-                    center: Vec3::new([0.3, -0.2, 0.1]),
-                    radius: 0.2,
-                    material: mat(0.2, 0.8, 0.3, 0.0, 0.5, 0.5),
-                },
-                Sphere {
-                    id: 2,
-                    center: Vec3::new([0.1, 0.35, -0.15]),
-                    radius: 0.18,
-                    material: mat(0.2, 0.3, 0.9, 0.0, 0.1, 0.9),
-                },
-                Sphere {
-                    id: 3,
-                    center: Vec3::new([-0.35, -0.3, -0.25]),
-                    radius: 0.22,
-                    material: mat(0.9, 0.9, 0.2, 0.0, 0.8, 0.2),
-                },
-                Sphere {
-                    id: 4,
-                    center: Vec3::new([0.0, 0.0, 0.0]),
-                    radius: 0.2,
-                    material: mat(1.0, 1.0, 1.0, 1.0, 0.5, 0.5),
-                },
-            ],
-            planes: vec![
-                Plane {
-                    id: 100,
-                    support: Vec3::new([0.0, 0.0, -0.5]),
-                    normal: Vec3::new([0.0, 0.0, 1.0]),
-                    material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
-                },
-                Plane {
-                    id: 101,
-                    support: Vec3::new([0.0, -1.0, 0.0]),
-                    normal: Vec3::new([0.0, 1.0, 0.0]),
-                    material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
-                },
-                Plane {
-                    id: 102,
-                    support: Vec3::new([1.0, 0.0, 0.0]),
-                    normal: Vec3::new([-1.0, 0.0, 0.0]),
-                    material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
-                },
-                Plane {
-                    id: 103,
-                    support: Vec3::new([-10.0, 0.0, 0.0]),
-                    normal: Vec3::new([1.0, 0.0, 0.0]),
-                    material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
-                },
-                Plane {
-                    id: 104,
-                    support: Vec3::new([0.0, 1.0, 0.0]),
-                    normal: Vec3::new([0.0, -1.0, 0.0]),
-                    material: mat(1.0, 1.0, 1.0, 0.0, 0.0, 1.0),
-                },
-            ],
-            light: Vec3::new([0.0, 0.0, 0.0]),
-            ambient: mat(0.1, 0.1, 0.1, 1.0, 0.0, 0.0),
-            num_bounces: 3,
-            num_samples: samples,
-        };
+        // The headless `--bench` mode renders the same scene, so the two
+        // cannot drift apart.
+        let scene = demo_scene(samples, 3);
 
         let [w, h] = [512usize, 512];
         let mut renderer = Renderer::new(&scene);
