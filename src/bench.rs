@@ -73,30 +73,43 @@
 //! bigger than anything above, and both have to keep the render bit-exact,
 //! which the `--serial --out` oracle is there to check.
 //!
-//! ### `-C target-cpu=native`: measured, directionally positive, not applied
+//! ### `-C target-cpu=native`, applied after the box went quiet
 //!
-//! The release profile compiles for baseline x86-64, which on this machine
-//! means SSE2 and no FMA, even though the CPU has both AVX2 and FMA.
-//! Building with `-C target-cpu=native` renders **bit-identically** — no FMA
-//! contraction crept into the arithmetic — and came out faster by median in
-//! all three measurement sessions: 4%, 5.8% and 6.3%.
+//! The release profile otherwise targets baseline x86-64, which on any
+//! machine built after 2011 means SSE2 and no FMA. This is worth 6.9%.
 //!
-//! It was not applied, because none of those three reached significance. The
-//! verdict was `inconclusive` every time; at fourteen reps the medians
-//! differed by 6.3% against standard deviations of 11.5% and 13.4%, on a box
-//! sitting at load 8 to 33 on twelve threads. A consistent direction is not a
-//! measurement.
+//! It took four attempts to believe. On the laptop-sized box the estimate
+//! was consistent — 4%, 5.8%, 6.3% — but `--compare` called every session
+//! `inconclusive`, because at load 8 to 33 on twelve threads the standard
+//! deviations were 11.5% and 13.4%. A consistent direction is not a
+//! measurement, and three guesses in the same direction is still three
+//! guesses.
 //!
-//! It is also a portability trade: a `native` binary will not start on a
-//! pre-AVX2 machine. Paying that for an effect that could not be proven here
-//! is the wrong order of decisions. If the machine ever goes quiet, this is
-//! the first thing to re-test, and `--compare` is what to test it with:
+//! Re-run on a Xeon Gold 6354 with 72 cores at load ~25, where the same
+//! tool reports a 1.2% noise floor, it resolves immediately:
 //!
 //! ```text
-//! RUSTFLAGS="-C target-cpu=native" cargo build --release
-//! ./target/release/light_transport --bench --serial --reps 14 \
-//!     --compare /path/to/the/default-codegen-binary
+//! light_transport --bench --serial --reps 10 --compare <native-binary>
+//! -> A 1.098s median  B 1.028s median  A is 6.9% slower  (A sd 1.2%, B sd 1.3%)
 //! ```
+//!
+//! Disjoint spreads, so the tool declares a winner rather than declining.
+//! The parallel path agreed in direction at 8.4% but stayed inconclusive,
+//! which is expected: 72 workers are scheduled against each other and the
+//! arithmetic stops being the thing being timed.
+//!
+//! The render is byte-identical on both paths, and the golden digest is the
+//! same on both — and the same again on a different CPU with AVX-512, so no
+//! FMA contraction is reaching the arithmetic.
+//!
+//! It is applied, in `.cargo/config.toml` rather than in the profile,
+//! because that is where it stays visible. The cost is a binary that will
+//! not start on a CPU without AVX2; delete that file for a portable build,
+//! or set `RUSTFLAGS` to override it once.
+//!
+//! The lesson is the one worth having: the same tool that could not decide
+//! on one machine decided on another, and neither answer was about the
+//! tool. Noise floor first, then effect.
 //!
 //! To reproduce the ranking:
 //!

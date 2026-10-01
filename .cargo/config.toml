@@ -1,0 +1,18 @@
+# Codegen for the render.
+#
+# The release profile otherwise targets baseline x86-64, which on any machine
+# built after 2011 means SSE2 and no FMA. Measured with the benchmark's own
+# paired A/B on a Xeon Gold 6354, where the noise floor is 1.2%:
+#
+#   light_transport --bench --serial --reps 10 --compare <native-binary>
+#   -> "A is 6.9% slower  (A sd 1.2%, B sd 1.3%)"
+#
+# The render is byte-identical either way. The golden digest in the test
+# module is the same on both build paths, and on both machines it was
+# checked against, so no FMA contraction is reaching the arithmetic.
+#
+# The cost is portability: a binary built this way will not start on a CPU
+# without AVX2. Delete this file for a portable build, or set `RUSTFLAGS` in
+# the environment to override it for a single build.
+[build]
+rustflags = ["-C", "target-cpu=native"]
