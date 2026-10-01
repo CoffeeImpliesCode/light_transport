@@ -31,6 +31,53 @@
 //! | `--serial` | off | single threaded, reproducible |
 //! | `--out PATH` | none | write the last render as a binary PPM |
 //! | `--quiet` | off | print only the summary line |
+//!
+//! ## Where the time goes, and what was already tried
+//!
+//+//! `perf record -e cycles:u` over a `--serial` pass at 512x512, 8 samples and
+//! 3 bounces, on a Core i7-9750H:
+//!
+//! | share | symbol |
+//! |-------|--------|
+//! | 51.6% | `Scene::intersect` |
+//! | 41.1% | `Renderer::cast` |
+//! |  2.4% | `chacha20`, the RNG |
+//! |  2.2% | `Scene::get_info` |
+//! |  2.0% | `RenderWorkload::handle` |
+//! |  0.4% | `powf`, the gamma curve |
+//!
+//! Four changes aimed at that table were built, measured against this binary
+//! in interleaved pairs, and **reverted, because none of them beat it**:
+//!
+//! - Hoisting `|direction|^2` onto `Ray` so the sphere test stops recomputing
+//!   it five times per ray, and computing the far root only when the near one
+//!   is not already positive. Both genuinely remove work.
+//! - Replacing the `Vec` index loops with iterator zips, to drop the 3.8% the
+//!   profile attributes to the slice bounds-check panic path.
+//! - Carrying the hit `Material` by reference instead of cloning it per hit.
+//! - A backface reject in the sphere test: `c > 0 && b > 0` means the ray can
+//!   never enter, so the discriminant, the sqrt and both divisions can be
+//!   skipped. **This one measured as an 8.5% regression.** In this scene
+//!   nearly every sphere is in front of the ray, so the test almost never
+//!   fires and the extra compares are pure cost on the hottest function in the
+//!   program. It is correct, and it is not worth it here.
+//!
+//! The part worth keeping: the profile says 51.6% is in `intersect`, but that
+//! time is the arithmetic itself — three dots, a sqrt and two divisions per
+//! sphere — not bookkeeping. Clearing the bookkeeping bought nothing. The wins
+//! left in `intersect` are changes to the traversal rather than the tidying:
+//! a bounding-volume hierarchy, or SIMD across the five spheres. Both are far
+//! bigger than anything above, and both have to keep the render bit-exact,
+//! which the `--serial --out` oracle is there to check.
+//!
+//! To reproduce the ranking:
+//!
+//! ```text
+//! cargo build --profile profiling
+//! perf record -F 999 -e cycles:u -g -- \
+//!     target/profiling/light_transport --bench --serial
+//! perf report -i perf.data --stdio --no-children -g none --sort srcline
+//! ```
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
