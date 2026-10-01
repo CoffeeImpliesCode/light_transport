@@ -786,6 +786,7 @@ impl Drop for Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
 
     const LENGTHS: [usize; 17] = [
         1, 7, 8, 9, 63, 64, 100, 127, 128, 255, 511, 512, 513, 519, 1000, 1023, 1024,
@@ -1095,5 +1096,183 @@ mod tests {
             .pixels
             .iter()
             .any(|p| *p != RGBA::new(0, 0, 0, 255)));
+    }
+
+    /// SHA-256 (FIPS 180-4), written out because the crate has no hashing
+    /// dependency and no dependency may be added. `std::hash::Hasher` is not
+    /// an option either: it is not stable across rustc versions, so the test
+    /// would fail on a toolchain bump for no real reason.
+    fn sha256(data: &[u8]) -> [u8; 32] {
+        // Packed seven per line. rustfmt defaults to one per line here, and 64
+        // lines of round constants bury the algorithm they belong to.
+        #[rustfmt::skip]
+        const K: [u32; 64] = [
+            0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1,
+            0x923f_82a4, 0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3,
+            0x72be_5d74, 0x80de_b1fe, 0x9bdc_06a7, 0xc19b_f174, 0xe49b_69c1, 0xefbe_4786,
+            0x0fc1_9dc6, 0x240c_a1cc, 0x2de9_2c6f, 0x4a74_84aa, 0x5cb0_a9dc, 0x76f9_88da,
+            0x983e_5152, 0xa831_c66d, 0xb003_27c8, 0xbf59_7fc7, 0xc6e0_0bf3, 0xd5a7_9147,
+            0x06ca_6351, 0x1429_2967, 0x27b7_0a85, 0x2e1b_2138, 0x4d2c_6dfc, 0x5338_0d13,
+            0x650a_7354, 0x766a_0abb, 0x81c2_c92e, 0x9272_2c85, 0xa2bf_e8a1, 0xa81a_664b,
+            0xc24b_8b70, 0xc76c_51a3, 0xd192_e819, 0xd699_0624, 0xf40e_3585, 0x106a_a070,
+            0x19a4_c116, 0x1e37_6c08, 0x2748_774c, 0x34b0_bcb5, 0x391c_0cb3, 0x4ed8_aa4a,
+            0x5b9c_ca4f, 0x682e_6ff3, 0x748f_82ee, 0x78a5_636f, 0x84c8_7814, 0x8cc7_0208,
+            0x90be_fffa, 0xa450_6ceb, 0xbef9_a3f7, 0xc671_78f2,
+        ];
+
+        let mut state: [u32; 8] = [
+            0x6a09_e667,
+            0xbb67_ae85,
+            0x3c6e_f372,
+            0xa54f_f53a,
+            0x510e_527f,
+            0x9b05_688c,
+            0x1f83_d9ab,
+            0x5be0_cd19,
+        ];
+
+        // Append 0x80, then zeroes, then the message length in bits as a big
+        // endian u64, so the padded message is a whole number of 64 byte
+        // blocks.
+        let mut padded = Vec::with_capacity(data.len() + 72);
+        padded.extend_from_slice(data);
+        padded.push(0x80);
+        while padded.len() % 64 != 56 {
+            padded.push(0);
+        }
+        padded.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
+
+        for block in padded.chunks_exact(64) {
+            let mut w = [0u32; 64];
+            for (word, quad) in w.iter_mut().zip(block.chunks_exact(4)) {
+                *word = u32::from_be_bytes([quad[0], quad[1], quad[2], quad[3]]);
+            }
+            for i in 16..64 {
+                let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+                let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+                w[i] = w[i - 16]
+                    .wrapping_add(s0)
+                    .wrapping_add(w[i - 7])
+                    .wrapping_add(s1);
+            }
+
+            let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
+            for i in 0..64 {
+                let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+                let choose = (e & f) ^ (!e & g);
+                let temp1 = h
+                    .wrapping_add(s1)
+                    .wrapping_add(choose)
+                    .wrapping_add(K[i])
+                    .wrapping_add(w[i]);
+                let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+                let majority = (a & b) ^ (a & c) ^ (b & c);
+                let temp2 = s0.wrapping_add(majority);
+
+                h = g;
+                g = f;
+                f = e;
+                e = d.wrapping_add(temp1);
+                d = c;
+                c = b;
+                b = a;
+                a = temp1.wrapping_add(temp2);
+            }
+
+            for (slot, word) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+                *slot = slot.wrapping_add(word);
+            }
+        }
+
+        let mut digest = [0u8; 32];
+        for (chunk, word) in digest.chunks_exact_mut(4).zip(state) {
+            chunk.copy_from_slice(&word.to_be_bytes());
+        }
+        digest
+    }
+
+    fn digest_hex(data: &[u8]) -> String {
+        sha256(data)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// The render, byte for byte, at the size and seed the `--bench --out`
+    /// run in the failure message produces.
+    const GOLDEN_SHA256: &str = "8187bc4541908aecaf0f28515cf17c192cfe944d3c2176001760a6642b672338";
+
+    /// Every optimization round in this project is held to one bar: the
+    /// render must not change by a single byte. That is checkable by hand,
+    ///
+    ///     light_transport --bench --serial --warmup 0 --iters 1 --size 48x48
+    ///       --samples 2 --bounces 1 --seed 1 --out golden.ppm
+    ///
+    /// piped into `cmp`, and it is exactly the check that gets skipped when
+    /// someone is in a hurry. This pins it to `cargo test` so it cannot be.
+    ///
+    /// The render and the serialisation below are the benchmark's serial path
+    /// and its writer, copied rather than called: `bench::render_serial` and
+    /// `bench::write_ppm` are private to that module, and a test that shared
+    /// them would stop noticing a change to either one.
+    ///
+    /// The test has a sensitivity floor, and it sits under the resolution of
+    /// an 8-bit byte. At 2 samples and 1 bounce a perturbation too small to
+    /// move a single byte leaves the image identical and the test correctly
+    /// stays green. Probing it with a change under that floor proves nothing:
+    /// nudge the surface epsilon `0.9999 -> 0.99999` and the digest does not
+    /// move. To show this test still bites, perturb coarsely, `0.9999 -> 0.95`.
+    #[test]
+    fn render_is_bit_identical_to_the_golden() {
+        let scene = demo_scene(2, 1);
+        let size = [48usize, 48];
+
+        // The walk order and the per tile seeding are load bearing: they are
+        // what makes the image independent of thread scheduling.
+        let mut image = Image::new(size);
+        for &(j0, j1) in &chunk_ranges(size[1], 8) {
+            for &(i0, i1) in &chunk_ranges(size[0], 8) {
+                let mut workload = RenderWorkload::new((i0, j0), (i1, j1), size);
+                let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+                workload.handle(&scene, &mut rng);
+                blit_chunk(
+                    &mut image,
+                    &RenderChunk {
+                        start: workload.start,
+                        end: workload.end,
+                        pixels: workload.pixels,
+                    },
+                );
+            }
+        }
+
+        // Byte for byte what `write_ppm` puts in the file: a 13 byte header
+        // and 48 * 48 * 3 bytes of colour, so 6925 bytes.
+        let mut ppm = Vec::with_capacity(6925);
+        ppm.extend_from_slice(format!("P6\n{} {}\n255\n", size[0], size[1]).as_bytes());
+        let bytes = image.bytes();
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let p = (y * size[0] + x) * 4;
+                ppm.extend_from_slice(&bytes[p..p + 3]);
+            }
+        }
+        assert_eq!(
+            ppm.len(),
+            6925,
+            "the serialised PPM is the wrong length, so it is not what \
+             `write_ppm` produces and the digest below means nothing"
+        );
+
+        assert_eq!(
+            digest_hex(&ppm),
+            GOLDEN_SHA256,
+            "the render changed. This is only correct if the change was intended to alter \
+             the image; otherwise an optimization has changed a pixel. If it was intended, \
+             re-derive the digest with:\n  \
+             light_transport --bench --serial --warmup 0 --iters 1 --size 48x48 \
+             --samples 2 --bounces 1 --seed 1 --out /tmp/golden.ppm\n  \
+             and sha256sum /tmp/golden.ppm"
+        );
     }
 }
