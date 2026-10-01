@@ -5,12 +5,10 @@
 # - winit talks to the Wayland compositor and falls back to X11 through x11-dl,
 #   which dlopens libX11/libXcursor/libXi/libXrandr at runtime.
 # - glutin (the glow backend) needs a GL/EGL implementation.
-# - the `wgpu` feature of eframe needs the Vulkan loader.
 #
-# The Rust channel is pinned to a dated nightly. The crate no longer needs
-# nightly (the last `#![feature(iter_array_chunks)]` gate went away when the
-# renderer stopped using `Iterator::array_chunks`), so this can be switched to
-# `channel = "stable"` with no source change once you want to.
+# The crate builds and tests on stable (verified against 1.99.0), so the
+# toolchain is not pinned to a dated nightly. Bump `version` only if a
+# nightly-only feature is ever needed again.
 let
   waylandLibs = with pkgs; [
     wayland
@@ -31,11 +29,8 @@ let
     libglvnd
   ];
 
-  gpuLibs = with pkgs; [
-    vulkan-loader
-  ];
-
-  appLibs = waylandLibs ++ x11Libs ++ glLibs ++ gpuLibs;
+  # eframe's `wgpu` feature is off, so no Vulkan loader is needed.
+  appLibs = waylandLibs ++ x11Libs ++ glLibs;
 in
 {
   # https://devenv.sh/packages/
@@ -50,10 +45,10 @@ in
   # https://devenv.sh/languages/
   languages.rust = {
     enable = true;
-    # rust-overlay (see devenv.yaml) supplies dated toolchains. `version` only has
-    # an effect while `channel` is not "nixpkgs".
-    channel = "nightly";
-    version = "2026-09-27";
+    # rust-overlay (see devenv.yaml) supplies dated toolchains when a
+    # `version` is set; with `channel = "stable"` the plain stable channel
+    # is used and there is nothing to pin.
+    channel = "stable";
   };
 
   # https://devenv.sh/scripts/
@@ -85,7 +80,7 @@ in
   enterTest = ''
     echo "Running tests"
     echo "Verifying the pinned toolchain"
-    cargo --version | grep --color=auto "nightly"
+    cargo --version
 
     echo "Type-checking the crate"
     cargo check --quiet

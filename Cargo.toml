@@ -6,10 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-eframe = {version = "0.28", default-features = false, features = ["default_fonts", "glow", "wayland", "wgpu", "x11"]}
-egui_glow = "0.28"
-glow = "0.14"
-rand = "*"
-crossbeam = "0.8"
-num_cpus = "1.13"
-num = "0.4"
+eframe = {version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"]}
+egui_glow = "0.36"
+rand = "0.10"
+crossbeam = "0.8.5"
+num_cpus = "1.17"
+num = "0.4.3"

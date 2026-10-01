@@ -6,7 +6,7 @@ use eframe::egui::{Separator, Slider, Visuals};
 use eframe::epaint::ecolor::Hsva;
 use eframe::epaint::{Color32, ColorImage};
 use egui::mutex::Mutex;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::geometry::{Plane, Sphere};
 use crate::image::Color;
@@ -29,9 +29,19 @@ pub struct LightTransport {
 impl LightTransport {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let _gl = cc.gl.as_ref(); // .expect("Run with glow backend!");
+
+        // Install the theme once, here. Doing it from the per-frame hook
+        // re-ran the whole style install on every pass.
+        let mut vis = Visuals::default();
+        vis.dark_mode = true;
+        cc.egui_ctx.set_visuals(vis);
+
         let image = ColorImage::new(
             [crate::DEFAULT_IMAGE_WIDTH, crate::DEFAULT_IMAGE_HEIGHT],
-            Color32::from_rgb(0, 0, 0),
+            vec![
+                Color32::BLACK;
+                crate::DEFAULT_IMAGE_WIDTH * crate::DEFAULT_IMAGE_HEIGHT
+            ],
         );
 
         // let image = Image::random([1000, 1000]);
@@ -41,23 +51,23 @@ impl LightTransport {
             egui::TextureOptions::NEAREST,
         );
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let mut spheres: Vec<Sphere> = (0..4)
             .into_iter()
             .map(|i| Sphere {
                 center: Vec3::new([
-                    rng.gen_range(-0.5..0.5),
-                    rng.gen_range(-0.5..0.5),
-                    rng.gen_range(-0.5..0.5),
+                    rng.random_range(-0.5..0.5),
+                    rng.random_range(-0.5..0.5),
+                    rng.random_range(-0.5..0.5),
                 ]),
-                radius: rng.gen_range(0.1..0.3),
+                radius: rng.random_range(0.1..0.3),
                 id: i,
                 material: Material {
                     color: Color::new(
-                        rng.gen_range(0.5..1.0),
-                        rng.gen_range(0.5..1.0),
-                        rng.gen_range(0.5..1.0),
+                        rng.random_range(0.5..1.0),
+                        rng.random_range(0.5..1.0),
+                        rng.random_range(0.5..1.0),
                         1.0,
                     ),
                     emmission: 0.0,
@@ -190,27 +200,25 @@ impl LightTransport {
 }
 
 impl eframe::App for LightTransport {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let mut vis = Visuals::default();
-        vis.dark_mode = true;
-        ctx.set_visuals(vis);
-
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _secs_since_start = Instant::now().duration_since(self.begin).as_secs_f64();
         let _secs_since_last = Instant::now().duration_since(self.last).as_secs_f64();
 
-        /*if secs_since_start > 3.0 {
-            frame.quit();
+        /*if _secs_since_start > 3.0 {
+            _frame.quit();
         }*/
 
-        // puffin_egui::profiler_window(ctx);
-        {
-            // Pick up finished tiles before reading the image, so the frame
-            // shows everything the workers have done so far.
-            self.renderer.drain();
-            let image = self.renderer.take_image();
+        // Pick up finished tiles before reading the image, so the frame
+        // shows everything the workers have done so far. This lives in
+        // `logic` rather than `ui` because eframe keeps calling `logic`
+        // while the window is hidden, so finished tiles cannot pile up.
+        self.renderer.drain();
+        let image = self.renderer.take_image();
+        self.texture_handle.set(image, egui::TextureOptions::LINEAR);
+    }
 
-            self.texture_handle.set(image, egui::TextureOptions::LINEAR);
-        }
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // puffin_egui::profiler_window(ui.ctx());
         /*
         if self.renderer.present.swap(false, Ordering::SeqCst) {
             println!("PRESENT");
@@ -223,7 +231,7 @@ impl eframe::App for LightTransport {
             self.renderer.render(&self.scene.lock());
         }*/
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 let drag_delta = ui
                     .image(&self.texture_handle)
@@ -391,7 +399,7 @@ impl eframe::App for LightTransport {
 
             self.last = Instant::now();
         });
-        ctx.request_repaint();
+        ui.ctx().request_repaint();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}

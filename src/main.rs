@@ -23,7 +23,7 @@ fn main() {
     let mut random_on_sphere = std::fs::File::create("tests/random_on_hemisphere.csv").unwrap();
     let norm = Vec3::new([0.0, 1.0, 1.0]);
     writeln!(&mut random_on_sphere, "X,Y,Z").unwrap();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..1000 {
         let v = Vec3::random_on_hemisphere(norm, &mut rng);
         writeln!(&mut random_on_sphere, "{},{},{}", v[0], v[1], v[2]).unwrap();
@@ -59,11 +59,9 @@ fn main() {
     let options = eframe::NativeOptions {
         // initial_window_size: Some(egui::vec2(1300.0, 1020.0)),
         multisampling: 0,
-        vsync: false,
 
-        // Both `glow` and `wgpu` are enabled, and eframe's `Renderer::default()`
-        // resolves to Wgpu in that case. This app is written against glow
-        // (egui_glow dep, `painter.gl()` usage, no wgpu code), so ask for it.
+        // eframe is built with the `glow` backend only, so `Renderer::Glow`
+        // is the sole option and this field just says so explicitly.
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };

@@ -303,10 +303,10 @@ impl Renderer {
                 // let stage = stage.clone();
 
                 std::thread::spawn(move || {
-                    // One generator per worker. Fetching `thread_rng()` per
-                    // sample made rand's reseeding-counter atomic the hottest
-                    // single instruction in the binary under perf.
-                    let mut rng = rand::thread_rng();
+                    // One generator per worker. Fetching `rng()` per sample
+                    // made rand's reseeding-counter atomic the hottest single
+                    // instruction in the binary under perf.
+                    let mut rng = rand::rng();
                     for mut workload in r.iter() {
                         let start = std::time::Instant::now();
                         // running.store(true, Ordering::Relaxed);

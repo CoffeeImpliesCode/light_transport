@@ -5,18 +5,18 @@ use std::{
 };
 
 use eframe::epaint::Color32;
-use rand::Rng;
+use rand::RngExt;
 
 pub type GlobalImage = Arc<Image>;
 
-// The render path reinterprets the RGBA buffer as raw bytes and as egui Color32.
-// That is only sound while the two layouts coincide, so pin the layout at
-// compile time: a layout change becomes a build error instead of undefined
-// behavior.
+// The render path hands the RGBA buffer to egui as raw bytes, so that view is
+// only sound while RGBA is four tightly packed, byte-aligned bytes. Pin the
+// layout at compile time: a change becomes a build error instead of undefined
+// behavior. `Color32` is no longer reinterpreted — it is `align(4)` since
+// ecolor 0.36, so the two layouts are no longer compatible.
 const _: () = assert!(std::mem::size_of::<RGBA>() == 4);
-const _: () = assert!(std::mem::size_of::<Color32>() == 4);
 const _: () = assert!(std::mem::align_of::<RGBA>() == 1);
-const _: () = assert!(std::mem::align_of::<Color32>() == 1);
+const _: () = assert!(std::mem::size_of::<Color32>() == 4);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -296,31 +296,16 @@ impl Image {
     }
 
     pub fn random(dimension: [usize; 2]) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut data: Vec<RGBA> = Vec::with_capacity(dimension[0] * dimension[1]);
 
         for _ in 0..dimension[0] * dimension[1] {
-            data.push(RGBA::rgb(rng.gen(), rng.gen(), rng.gen()));
+            data.push(RGBA::rgb(rng.random(), rng.random(), rng.random()));
         }
 
         Self {
             size: dimension,
             pixels: data,
-        }
-    }
-
-    pub fn color_32(&self) -> &[Color32] {
-        unsafe {
-            std::slice::from_raw_parts(self.pixels.as_ptr() as *const Color32, self.pixels.len())
-        }
-    }
-
-    pub fn color_32_mut(&mut self) -> &mut [Color32] {
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.pixels.as_mut_ptr() as *mut Color32,
-                self.pixels.len(),
-            )
         }
     }
 

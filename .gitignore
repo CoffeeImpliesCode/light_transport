@@ -3,7 +3,6 @@
 *.log
 tmp/
 target/
-Cargo.lock
 
 # Devenv
 .devenv

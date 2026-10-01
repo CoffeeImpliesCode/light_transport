@@ -4,7 +4,7 @@ use std::ops::{
 
 use num::{Float, Num};
 
-use rand::Rng;
+use rand::RngExt;
 
 pub trait Constants {
     const E: Self;
@@ -207,7 +207,7 @@ impl<T: Float + Constants + From<f32>> Vec<T, 3> {
     /// The previous formulation sampled an angle pair and spent five
     /// transcendental calls per direction (`acos` plus two `sin`/`cos` pairs),
     /// which perf attributed to ~30% of total render time. This needs one
-    /// `sqrt` and a single `gen` per component. Acceptance is pi/4, so the
+    /// `sqrt` and a single `random` per component. Acceptance is pi/4, so the
     /// loop averages about 1.27 iterations.
     ///
     /// The generator is passed in rather than fetched per call. `rand`'s
@@ -216,8 +216,8 @@ impl<T: Float + Constants + From<f32>> Vec<T, 3> {
     /// perf. One generator per worker pays it once rather than per sample.
     pub fn random_on_sphere<R: rand::Rng + ?Sized>(rng: &mut R) -> Vec<T, 3> {
         loop {
-            let x: f32 = rng.gen::<f32>() * 2.0 - 1.0;
-            let y: f32 = rng.gen::<f32>() * 2.0 - 1.0;
+            let x: f32 = rng.random::<f32>() * 2.0 - 1.0;
+            let y: f32 = rng.random::<f32>() * 2.0 - 1.0;
             let s = x * x + y * y;
             if s < 1.0 && s > 0.0 {
                 // (x*f)^2 + (y*f)^2 + (1 - 2s)^2 == 4s(1-s) + 1 - 4s + 4s^2 == 1.
@@ -448,13 +448,20 @@ impl<T: Copy + Float, const Dim: usize> DivAssign<T> for Vec<T, Dim> {
 mod tests {
     use super::*;
 
+    /// A fixed-seed generator, so a statistical assertion fails the same way
+    /// on every run instead of once in twenty. See `random_on_sphere_is_uniform`.
+    fn seeded_rng(seed: u64) -> rand::rngs::StdRng {
+        use rand::SeedableRng;
+        rand::rngs::StdRng::seed_from_u64(seed)
+    }
+
     /// The old angle-pair sampler was replaced because it burned five
     /// transcendental calls per direction. Correctness of the replacement
     /// matters more than the speed: these pin down unit length and the
     /// spherical distribution, which a trig-free method could easily get wrong.
     #[test]
     fn random_on_sphere_is_unit_length() {
-        let mut rng = rand::thread_rng();
+        let mut rng = seeded_rng(0x5EED_0000_0000_0001);
         for _ in 0..20_000 {
             let v = Vec3::random_on_sphere(&mut rng);
             let len = v.len();
@@ -472,7 +479,7 @@ mod tests {
         const N: usize = 120_000;
         let mut z_sum = 0.0f32;
         let mut octants = [0u32; 8];
-        let mut rng = rand::thread_rng();
+        let mut rng = seeded_rng(0x5EED_0000_0000_0002);
         for _ in 0..N {
             let v = Vec3::random_on_sphere(&mut rng);
             z_sum += v[2];
@@ -486,13 +493,18 @@ mod tests {
         let mean_z = z_sum / N as f32;
         assert!(mean_z.abs() < 0.01, "z mean drifted: {mean_z}");
 
-        // Every octant within 2% of the expected eighth is far outside the
-        // sampling noise at this N (expected 15000, sd ~37).
+        // Each octant count is Binomial(N, 1/8), so its standard deviation is
+        // sqrt(N * p * (1 - p)) — about 115 counts at this N, not the 37 an
+        // earlier comment claimed. A 2% band was 2.6 sigma, which failed once
+        // in twenty runs on a correct sampler. Bound at 5 sigma instead: the
+        // chance of a false failure across all eight octants drops below 1e-5.
+        let expected = N as f32 / 8.0;
+        let sigma = (N as f32 * 0.125 * 0.875).sqrt();
         for (i, count) in octants.iter().enumerate() {
-            let expected = N as f32 / 8.0;
             assert!(
-                (*count as f32 - expected).abs() < expected * 0.02,
-                "octant {i} skewed: {count} vs {expected}"
+                (*count as f32 - expected).abs() < 5.0 * sigma,
+                "octant {i} skewed: {count} vs {expected} (5 sigma = {})",
+                5.0 * sigma
             );
         }
     }
@@ -506,7 +518,7 @@ mod tests {
             Vec3::new([0.0, -1.0, 0.0]),
             Vec3::new([0.577, 0.577, 0.577]),
         ];
-        let mut rng = rand::thread_rng();
+        let mut rng = seeded_rng(0x5EED_0000_0000_0003);
         for n in normals {
             let n = n.normalized();
             for _ in 0..10_000 {
