@@ -1,3 +1,8 @@
+// WIP primitive library. `Hit`, `Local`, `Triangle`, `Cuboid` and `Shapes` are
+// stubs waiting on their implementations. Scoped here rather than at the crate
+// root so that dead code in the application modules still warns.
+#![allow(dead_code)]
+
 use crate::material::Material;
 use crate::math::{Vec3, F};
 
@@ -79,7 +84,7 @@ impl Intersect for Sphere {
 
 impl Hit for Sphere {
     #[inline(always)]
-    fn hit(&self, closest: Vec3) -> HitInfo {
+    fn hit(&self, _closest: Vec3) -> HitInfo {
         todo!()
     }
 }
@@ -169,7 +174,7 @@ impl Intersect for Plane {
 pub struct Cuboid {}
 
 impl Intersect for Cuboid {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
+    fn intersect(&self, _ray: &Ray) -> Option<Intersection> {
         todo!()
     }
 }

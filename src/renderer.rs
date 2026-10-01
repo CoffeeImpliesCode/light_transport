@@ -4,19 +4,11 @@ use std::{
     thread::JoinHandle,
 };
 
-use std::cmp::PartialOrd;
-
-use eframe::{
-    egui,
-    epaint::{Color32, ColorImage},
-};
+use eframe::{egui, epaint::ColorImage};
 use egui::mutex::Mutex;
 
+use crate::image::{Color, RGBA};
 use crate::Image;
-use crate::{
-    image::{Color, RGBA},
-    DEFAULT_IMAGE_HEIGHT, DEFAULT_IMAGE_WIDTH,
-};
 
 use crate::material::{schlick_fresnel, Material};
 use crate::math::{Constants, Vec3, F};
@@ -34,6 +26,8 @@ pub struct Renderer {
     // pub image: Arc<Mutex<Option<ColorImage>>>,
     pub image: Image,
     pub size: Arc<Mutex<[usize; 2]>>,
+    // Kept current by the worker threads; no call site reads it yet.
+    #[allow(dead_code)]
     pub avg_rps: Arc<Mutex<(f64, usize)>>,
 }
 
@@ -125,6 +119,9 @@ pub struct Scene {
     pub camera: Camera,
     pub spheres: Vec<Sphere>,
     pub planes: Vec<Plane>,
+    // Directional light. The BRDF does not read it yet; the emitters carry
+    // their own `emmission` term instead.
+    #[allow(dead_code)]
     pub light: Vec3,
     pub ambient: Material,
     pub num_samples: usize,
@@ -638,11 +635,11 @@ impl Renderer {
     }
 
     pub fn diffuse_brdf(
-        incoming: Vec3,
-        outgoing: Vec3,
-        normal: Vec3,
-        reflecting: F,
-        diffuse: F,
+        _incoming: Vec3,
+        _outgoing: Vec3,
+        _normal: Vec3,
+        _reflecting: F,
+        _diffuse: F,
     ) -> F {
         F::FRAC_1_PI
     }

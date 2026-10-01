@@ -1,8 +1,4 @@
-#![allow(dead_code)]
-
 use std::io::Write;
-
-use eframe::egui;
 
 mod app;
 mod geometry;
@@ -14,7 +10,6 @@ mod renderer;
 use app::LightTransport;
 use image::Image;
 use math::Vec3;
-use renderer::Renderer;
 
 const DEFAULT_IMAGE_WIDTH: usize = 512;
 const DEFAULT_IMAGE_HEIGHT: usize = 512;
@@ -29,10 +24,10 @@ fn main() {
         writeln!(&mut random_on_sphere, "{},{},{}", v[0], v[1], v[2]).unwrap();
     }
 
-    let up = Vec3::new([0.0, 0.0, 1.0]);
+    let _up = Vec3::new([0.0, 0.0, 1.0]);
 
-    let outer = 10;
-    let inner = 100000;
+    let _outer = 10;
+    let _inner = 100000;
 
     /*let samples = (0..outer)
             .into_iter()

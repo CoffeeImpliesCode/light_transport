@@ -1,4 +1,8 @@
-use core::slice;
+// WIP image module. The unused colour constructors, `random` and `bytes_mut`
+// are kept for render paths that have not landed. Scoped here rather than at
+// the crate root so that dead code in the application modules still warns.
+#![allow(dead_code)]
+
 use std::{
     ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
     sync::Arc,

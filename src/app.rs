@@ -38,10 +38,7 @@ impl LightTransport {
 
         let image = ColorImage::new(
             [crate::DEFAULT_IMAGE_WIDTH, crate::DEFAULT_IMAGE_HEIGHT],
-            vec![
-                Color32::BLACK;
-                crate::DEFAULT_IMAGE_WIDTH * crate::DEFAULT_IMAGE_HEIGHT
-            ],
+            vec![Color32::BLACK; crate::DEFAULT_IMAGE_WIDTH * crate::DEFAULT_IMAGE_HEIGHT],
         );
 
         // let image = Image::random([1000, 1000]);
@@ -264,16 +261,16 @@ impl eframe::App for LightTransport {
 
                     let right = scene.camera.right;
                     let up = scene.camera.up;
-                    let dir = up.cross(right).normalized();
+                    let _dir = up.cross(right).normalized();
 
                     {
                         // let input = ctx.input();
 
                         // if input.key_down(Key::W) {
-                        //     scene.camera.origin += dir * 0.02;
+                        //     scene.camera.origin += _dir * 0.02;
                         // }
                         // if input.key_down(Key::S) {
-                        //     scene.camera.origin -= dir * 0.02;
+                        //     scene.camera.origin -= _dir * 0.02;
                         // }
                         // if input.key_down(Key::A) {
                         //     scene.camera.origin -= right * 0.02;
@@ -351,7 +348,7 @@ impl eframe::App for LightTransport {
 
                             ui.horizontal(|ui| {
                                 ui.label("Color");
-                                let mut c = sphere.material.color.as_rgb_slice_mut();
+                                let c = sphere.material.color.as_rgb_slice_mut();
                                 let mut color = Hsva::from_rgb(*c);
                                 if egui::widgets::color_picker::color_picker_hsva_2d(
                                     ui,

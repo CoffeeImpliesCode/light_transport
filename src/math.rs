@@ -1,3 +1,9 @@
+// WIP linear-algebra module. The rotor, the `Vec2/3/4` aliases, the spherical
+// conversions and the `Constants` impls are written ahead of their call sites.
+// Scoped here rather than at the crate root so that dead code in the
+// application modules still warns.
+#![allow(dead_code)]
+
 use std::ops::{
     Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign,
 };
@@ -125,7 +131,7 @@ impl<T: Copy + Float> Rotor3<T> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(transparent)]
-pub struct Vec<T: Copy, const Dim: usize>([T; Dim]);
+pub struct Vec<T: Copy, const DIM: usize>([T; DIM]);
 
 pub type F = f32;
 pub type Vec3 = Vec<F, 3>;
@@ -137,32 +143,32 @@ pub type Vec3d = Vec<f64, 3>;
 pub type Vec4f = Vec<f32, 4>;
 pub type Vec4d = Vec<f64, 4>;
 
-impl<T: Copy, const Dim: usize> Vec<T, Dim> {
+impl<T: Copy, const DIM: usize> Vec<T, DIM> {
     #[inline(always)]
-    pub const fn new(values: [T; Dim]) -> Self {
+    pub const fn new(values: [T; DIM]) -> Self {
         Vec(values)
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Vec<T, DIM> {
     #[inline(always)]
-    pub fn dot(&self, other: Vec<T, Dim>) -> T {
+    pub fn dot(&self, other: Vec<T, DIM>) -> T {
         let mut res = T::zero();
-        for i in 0..Dim {
+        for i in 0..DIM {
             res = res + self[i] * other[i];
         }
         res
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Vec<T, DIM> {
     #[inline(always)]
     pub fn zero() -> Self {
-        Vec([T::zero(); Dim])
+        Vec([T::zero(); DIM])
     }
 
     pub fn one() -> Self {
-        Vec([T::one(); Dim])
+        Vec([T::one(); DIM])
     }
 
     #[inline(always)]
@@ -193,8 +199,8 @@ impl<T: Float> Vec<T, 3> {
     }
 
     pub fn rot_ab(&self, a: Vec<T, 3>, b: Vec<T, 3>) -> Vec<T, 3> {
-        let ab = a.prod(b);
-        let ba = b.prod(a);
+        let _ab = a.prod(b);
+        let _ba = b.prod(a);
         todo!()
     }
 }
@@ -232,7 +238,7 @@ impl<T: Float + Constants + From<f32>> Vec<T, 3> {
     }
 
     #[inline(always)]
-    pub fn from_spherical(r: T, theta: T, phi: T) -> Vec<T, 3> {
+    pub fn from_spherical(_r: T, _theta: T, _phi: T) -> Vec<T, 3> {
         unimplemented!()
     }
 
@@ -270,9 +276,9 @@ impl<T: Float + Constants + From<f32>> Vec<T, 3> {
     }
 }
 
-impl<T: Float + From<f32>, const Dim: usize> Vec<T, Dim> {
+impl<T: Float + From<f32>, const DIM: usize> Vec<T, DIM> {
     #[inline(always)]
-    pub fn new_normalized(values: [T; Dim]) -> Self {
+    pub fn new_normalized(values: [T; DIM]) -> Self {
         Self::new(values).normalized()
     }
 
@@ -293,27 +299,27 @@ impl<T: Float + From<f32>, const Dim: usize> Vec<T, Dim> {
     }
 
     #[inline(always)]
-    pub fn reflect(&self, norm: Vec<T, Dim>) -> Vec<T, Dim> {
+    pub fn reflect(&self, norm: Vec<T, DIM>) -> Vec<T, DIM> {
         norm * (*self * norm) * <f32 as Into<T>>::into(2.0) - *self
     }
 }
 
-impl<T: Copy, const Dim: usize> Index<usize> for Vec<T, Dim> {
+impl<T: Copy, const DIM: usize> Index<usize> for Vec<T, DIM> {
     type Output = T;
     fn index(&self, idx: usize) -> &Self::Output {
         &self.0[idx]
     }
 }
 
-impl<T: Copy, const Dim: usize> IndexMut<usize> for Vec<T, Dim> {
+impl<T: Copy, const DIM: usize> IndexMut<usize> for Vec<T, DIM> {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         &mut self.0[idx]
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Add<Vec<T, Dim>> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn add(self, other: Vec<T, Dim>) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Add<Vec<T, DIM>> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn add(self, other: Vec<T, DIM>) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..res.0.len() {
             res[i] = res[i] + other[i];
@@ -322,17 +328,17 @@ impl<T: Copy + Num, const Dim: usize> Add<Vec<T, Dim>> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> AddAssign<Vec<T, Dim>> for Vec<T, Dim> {
-    fn add_assign(&mut self, other: Vec<T, Dim>) {
+impl<T: Copy + Num, const DIM: usize> AddAssign<Vec<T, DIM>> for Vec<T, DIM> {
+    fn add_assign(&mut self, other: Vec<T, DIM>) {
         for i in 0..self.0.len() {
             self[i] = self[i] + other[i];
         }
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Add<T> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn add(self, offset: T) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Add<T> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn add(self, offset: T) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..self.0.len() {
             res[i] = res[i] + offset
@@ -341,7 +347,7 @@ impl<T: Copy + Num, const Dim: usize> Add<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> AddAssign<T> for Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> AddAssign<T> for Vec<T, DIM> {
     fn add_assign(&mut self, offset: T) {
         for i in 0..self.0.len() {
             self[i] = self[i] + offset;
@@ -349,9 +355,9 @@ impl<T: Copy + Num, const Dim: usize> AddAssign<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Sub<Vec<T, Dim>> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn sub(self, other: Vec<T, Dim>) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Sub<Vec<T, DIM>> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn sub(self, other: Vec<T, DIM>) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..self.0.len() {
             res[i] = res[i] - other[i];
@@ -360,9 +366,9 @@ impl<T: Copy + Num, const Dim: usize> Sub<Vec<T, Dim>> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Neg for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn neg(self) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Neg for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn neg(self) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..self.0.len() {
             res[i] = T::zero() - res[i];
@@ -371,17 +377,17 @@ impl<T: Copy + Num, const Dim: usize> Neg for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> SubAssign<Vec<T, Dim>> for Vec<T, Dim> {
-    fn sub_assign(&mut self, other: Vec<T, Dim>) {
+impl<T: Copy + Num, const DIM: usize> SubAssign<Vec<T, DIM>> for Vec<T, DIM> {
+    fn sub_assign(&mut self, other: Vec<T, DIM>) {
         for i in 0..self.0.len() {
             self[i] = self[i] - other[i];
         }
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Sub<T> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn sub(self, offset: T) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Sub<T> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn sub(self, offset: T) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..self.0.len() {
             res[i] = res[i] - offset;
@@ -390,7 +396,7 @@ impl<T: Copy + Num, const Dim: usize> Sub<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> SubAssign<T> for Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> SubAssign<T> for Vec<T, DIM> {
     fn sub_assign(&mut self, offset: T) {
         for i in 0..self.0.len() {
             self[i] = self[i] - offset;
@@ -398,16 +404,16 @@ impl<T: Copy + Num, const Dim: usize> SubAssign<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Mul<Vec<T, Dim>> for Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Mul<Vec<T, DIM>> for Vec<T, DIM> {
     type Output = T;
-    fn mul(self, other: Vec<T, Dim>) -> T {
+    fn mul(self, other: Vec<T, DIM>) -> T {
         self.dot(other)
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> Mul<T> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn mul(self, scale: T) -> Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> Mul<T> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn mul(self, scale: T) -> Vec<T, DIM> {
         let mut res = self.clone();
         for i in 0..self.0.len() {
             res[i] = res[i] * scale;
@@ -416,7 +422,7 @@ impl<T: Copy + Num, const Dim: usize> Mul<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Num, const Dim: usize> MulAssign<T> for Vec<T, Dim> {
+impl<T: Copy + Num, const DIM: usize> MulAssign<T> for Vec<T, DIM> {
     fn mul_assign(&mut self, scale: T) {
         for i in 0..self.0.len() {
             self[i] = self[i] * scale;
@@ -424,9 +430,9 @@ impl<T: Copy + Num, const Dim: usize> MulAssign<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Float, const Dim: usize> Div<T> for Vec<T, Dim> {
-    type Output = Vec<T, Dim>;
-    fn div(self, scale: T) -> Vec<T, Dim> {
+impl<T: Copy + Float, const DIM: usize> Div<T> for Vec<T, DIM> {
+    type Output = Vec<T, DIM>;
+    fn div(self, scale: T) -> Vec<T, DIM> {
         let over = scale.recip();
         let mut ret = self.clone();
         for i in 0..self.0.len() {
@@ -436,7 +442,7 @@ impl<T: Copy + Float, const Dim: usize> Div<T> for Vec<T, Dim> {
     }
 }
 
-impl<T: Copy + Float, const Dim: usize> DivAssign<T> for Vec<T, Dim> {
+impl<T: Copy + Float, const DIM: usize> DivAssign<T> for Vec<T, DIM> {
     fn div_assign(&mut self, scale: T) {
         let over = scale.recip();
         for i in 0..self.0.len() {
