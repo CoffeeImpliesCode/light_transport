@@ -1,5 +1,6 @@
 use num_cpus;
 use std::{
+    hint::select_unpredictable,
     sync::{Arc, RwLock},
     thread::JoinHandle,
 };
@@ -163,12 +164,36 @@ impl Intersect for Scene {
             }
         }
 
+        // The five plane tests are the hottest arithmetic in the program,
+        // and the test that used to end each one, `t < 0.0001`, is close to
+        // a coin flip for a ray inside a closed room: half the walls are
+        // behind it, and the neighbouring pixels that guess wrong are
+        // neighbours in the image too. So the arithmetic below is
+        // `Plane::intersect`'s, in the same order and on the same values,
+        // with neither rejection an early return any more. Both are
+        // predicates now, and the fold is a select.
+        //
+        // Two things have to survive that, and both are about the id rather
+        // than the distance. The fold still walks the slice in index order
+        // and still tests strictly `<`, so a tie between two planes at the
+        // same distance keeps the lower index, exactly as the sequential
+        // loop did; a horizontal minimum would not promise that. And the id
+        // travels with its own distance, out of the plane's `id` field:
+        // `get_info` reads `planes[id - 100]`, so the lane number is not the
+        // id.
         for p in &self.planes {
-            if let Some(inter @ Intersection { distance, .. }) = p.intersect(ray) {
-                if distance < closest.distance {
-                    closest = inter
-                }
-            }
+            let denom = ray.direction * p.normal;
+            let t = (p.support - ray.origin) * p.normal / denom;
+            // Non-short-circuit `&`: every term is already computed, and
+            // the short-circuit form is a branch again, which is the thing
+            // this loop is trying not to be.
+            let hit = (denom.abs() >= 0.0001) & (t >= 0.0001) & (t < closest.distance);
+            // `select_unpredictable` is `if hit { a } else { b }` with the
+            // hint that the condition is not worth predicting: LLVM takes
+            // the plain form as permission to sink the id load into a taken
+            // branch, which is the branch this loop exists to not have.
+            closest.distance = select_unpredictable(hit, t, closest.distance);
+            closest.id = select_unpredictable(hit, p.id, closest.id);
         }
 
         if closest.distance == F::INFINITY {
@@ -212,43 +237,44 @@ impl RenderWorkload {
         let pre_render: RGBA = Color::new(0.1, 0.1, 0.1, 1.0).into();
 
         let width = self.end.0 - self.start.0 + 1;
-        debug_assert_eq!(self.pixels.len(), width * (self.end.1 - self.start.1 + 1));
-
-        // Tile local, row major offset of a pixel.
-        let at = |i: usize, j: usize| (j - self.start.1) * width + (i - self.start.0);
+        let height = self.end.1 - self.start.1 + 1;
+        debug_assert_eq!(self.pixels.len(), width * height);
 
         let camera_dx = 2.0 / self.size[0] as F;
         let camera_dy = 2.0 / self.size[1] as F;
 
-        for j in self.start.1..=self.end.1 {
-            for i in self.start.0..=self.end.0 {
-                self.pixels[at(i, j)] = pre_render;
+        // The tile is `width` by `height` pixels, row major, so a row of it
+        // is a slice of `self.pixels`. Every loop below walks rows and
+        // writes through that slice, which is what takes the per-pixel
+        // index, its arithmetic and its bounds check out of the tile.
+        let black: RGBA = Color::BLACK.into();
+        self.pixels.fill(pre_render);
+
+        // The frame around the tile, drawn after the fill so it survives it:
+        // the whole first and last row, then the two columns. Same pixels
+        // and the same colour as writing them one index at a time did.
+        for (row, pixels) in self.pixels.chunks_exact_mut(width).enumerate() {
+            if row == 0 || row == height - 1 {
+                pixels.fill(black);
+            } else {
+                pixels[0] = black;
+                pixels[width - 1] = black;
             }
-        }
-
-        for i in self.start.0..=self.end.0 {
-            self.pixels[at(i, self.start.1)] = Color::BLACK.into();
-            self.pixels[at(i, self.end.1)] = Color::BLACK.into();
-        }
-
-        for j in self.start.1..=self.end.1 {
-            self.pixels[at(self.start.0, j)] = Color::BLACK.into();
-            self.pixels[at(self.end.0, j)] = Color::BLACK.into();
         }
 
         let mut cast_rays = 0;
 
-        for j in self.start.1..=self.end.1 {
+        for (row, pixels) in self.pixels.chunks_exact_mut(width).enumerate() {
+            let j = self.start.1 + row;
             let camera_y = j as F * camera_dy - 1.0;
-            for i in self.start.0..=self.end.0 {
+
+            for (x, slot) in pixels.iter_mut().enumerate() {
+                let i = self.start.0 + x;
                 let camera_x = i as F * camera_dx - 1.0;
 
                 let ray_direction = direction - dy * camera_y + dx * camera_x;
 
-                let ray = Ray {
-                    origin: scene.camera.origin,
-                    direction: ray_direction.normalized(),
-                };
+                let ray = Ray::new(scene.camera.origin, ray_direction.normalized());
 
                 let mut color = Color::BLACK;
 
@@ -258,7 +284,7 @@ impl RenderWorkload {
                     cast_rays += 1;
                 }
                 color *= 1.0 / (scene.num_samples as F);
-                self.pixels[at(i, j)] = color.gamma().into();
+                *slot = color.gamma().into();
                 // stage.store(j * image.dimension[1] + i, Ordering::Release);
             }
         }
@@ -509,10 +535,7 @@ impl Renderer {
                 let mut average_color = Color::BLACK;
 
                 if hit.material.reflecting > 0.0 {
-                    let r = Ray {
-                        origin: pos,
-                        direction: reflecting_direction,
-                    };
+                    let r = Ray::new(pos, reflecting_direction);
                     let color_incoming = Renderer::cast(scene, &r, n - 1, rng);
 
                     // The BRDF already carries the reflectance, so the
@@ -530,10 +553,10 @@ impl Renderer {
                 }
 
                 if hit.material.diffuse > 0.0 {
-                    let r = Ray {
-                        origin: pos,
-                        direction: Vec3::random_on_hemisphere(hit.normal, rng).normalized(),
-                    };
+                    let r = Ray::new(
+                        pos,
+                        Vec3::random_on_hemisphere(hit.normal, rng).normalized(),
+                    );
                     let color_incoming = Renderer::cast(scene, &r, n - 1, rng);
 
                     average_color += color_incoming
@@ -671,10 +694,50 @@ pub fn blit_chunk(image: &mut Image, chunk: &RenderChunk) {
     }
 
     let chunk_width = x1 - x0 + 1;
-    for (row, y) in (y0..=y1).enumerate() {
-        let src = row * chunk_width;
-        let dst = y * width + x0;
-        image.pixels[dst..dst + chunk_width].copy_from_slice(&chunk.pixels[src..src + chunk_width]);
+    let rows = y1 - y0 + 1;
+
+    // A tile as wide as the image is one contiguous run in both buffers, so
+    // it crosses in one copy instead of one per row. `render` hands out
+    // eight pixel tiles, so this is the shape a caller with a wide tile
+    // would get, not the one the benchmark runs.
+    //
+    // The run stays inside the image on the bottom band too. `x1 < width`
+    // with `chunk_width == width` forces `x0 == 0`, and `y1 < height` gives
+    // `y0 * width + rows * width == (y1 + 1) * width <= width * height`.
+    if chunk_width == width {
+        let len = rows * width;
+        let dst = &mut image.pixels[y0 * width..][..len];
+        dst.copy_from_slice(&chunk.pixels[..len]);
+        return;
+    }
+
+    // Otherwise the rows are `width` apart in the image and `chunk_width`
+    // apart in the tile. The destination starts on the tile's own column,
+    // so chunk `k` of it begins at `(y0 + k) * width + x0`: row `y0 + k`,
+    // column `x0`, whatever `y0` is.
+    //
+    // `chunks_mut`, not `chunks_exact_mut`. The slice runs to the end of
+    // the image, so its last chunk is the short one: the `width - x0`
+    // pixels that follow row `y1`. On the bottom band that chunk is the
+    // last row the tile needs, so it has to be copied, not dropped. It is
+    // the chunk `chunks_exact_mut` threw away.
+    //
+    // Every chunk is at least `chunk_width` long. Row `y` runs `width - x0`
+    // from column `x0` to the end of the image, and `x1 < width` gives
+    // `chunk_width <= width - x0`. So the copy checks its length once per
+    // row, and it cannot panic.
+    //
+    // A tile holds `chunk_width * rows` pixels, so the source yields
+    // exactly `rows` chunks and the zip stops there on its own. `take(rows)`
+    // is a belt on that. It can only cut a row short if a caller hands in
+    // a chunk longer than the tile it names, and then the copy would run
+    // past row `y1` without it.
+    for (dst, src) in image.pixels[y0 * width + x0..]
+        .chunks_mut(width)
+        .zip(chunk.pixels.chunks_exact(chunk_width))
+        .take(rows)
+    {
+        dst[..chunk_width].copy_from_slice(src);
     }
 }
 
@@ -1202,6 +1265,12 @@ mod tests {
     /// run in the failure message produces.
     const GOLDEN_SHA256: &str = "8187bc4541908aecaf0f28515cf17c192cfe944d3c2176001760a6642b672338";
 
+    /// The same frame over a scene with no geometry, so every pixel is the
+    /// ambient colour and none of them is black. Catches tile plumbing that
+    /// the lit digest above is blind to; see the test body for why.
+    const GOLDEN_UNLIT_SHA256: &str =
+        "7d27436799b26f857f60964303de0e8bef7b5b2f8e424b2b2df1dff625ead66e";
+
     /// Every optimization round in this project is held to one bar: the
     /// render must not change by a single byte. That is checkable by hand,
     ///
@@ -1224,17 +1293,58 @@ mod tests {
     /// move. To show this test still bites, perturb coarsely, `0.9999 -> 0.95`.
     #[test]
     fn render_is_bit_identical_to_the_golden() {
-        let scene = demo_scene(2, 1);
         let size = [48usize, 48];
 
-        // The walk order and the per tile seeding are load bearing: they are
-        // what makes the image independent of thread scheduling.
+        // The demo scene, at the framing the benchmark uses.
+        assert_eq!(
+            digest_hex(&render_serial_ppm(&demo_scene(2, 1), size)),
+            GOLDEN_SHA256,
+            "the lit render changed. This is only correct if the change was intended \
+             to alter the image; otherwise an optimization has changed a pixel. If it \
+             was intended, re-derive with:\n  \
+             light_transport --bench --serial --warmup 0 --iters 1 --size 48x48 \
+             --samples 2 --bounces 1 --seed 1 --out /tmp/golden.ppm\n  \
+             and sha256sum /tmp/golden.ppm"
+        );
+
+        // The same frame over a scene with no geometry at all, so every ray
+        // misses and every pixel resolves to the ambient colour — no black
+        // anywhere in it.
+        //
+        // This second digest exists because the first one cannot see half the
+        // failures worth seeing. The demo camera sits at (-5, 0, 0) and the
+        // scene is lit by one small emissive sphere, so the frame is a bright
+        // blob on black, and the edges — which is exactly where a tile-plumbing
+        // bug does its damage — are black. A dropped row of black hashes the
+        // same as a delivered row of black. This test sat green through a
+        // `blit_chunk` that silently discarded the last row of every
+        // bottom-band tile, because that row was black in the image it was
+        // watching. Over an image that is non-black everywhere, a pixel that
+        // never arrives is a black pixel and the digest moves.
+        assert_eq!(
+            digest_hex(&render_serial_ppm(
+                &test_scene(Color::rgb(0.5, 0.25, 0.125)),
+                size
+            )),
+            GOLDEN_UNLIT_SHA256,
+            "the unlit render changed, which means a tile did not deliver every \
+             pixel it owed the image. A black row or column here is a tile whose \
+             pixels were never blitted, not a dark pixel."
+        );
+    }
+
+    /// Render `size` single-threaded from a fixed seed and serialise it to a
+    /// binary PPM, byte for byte what `write_ppm` puts in a file.
+    ///
+    /// The walk order and the per-tile seed are load bearing: together they
+    /// make the image independent of thread scheduling.
+    fn render_serial_ppm(scene: &Scene, size: [usize; 2]) -> Vec<u8> {
         let mut image = Image::new(size);
         for &(j0, j1) in &chunk_ranges(size[1], 8) {
             for &(i0, i1) in &chunk_ranges(size[0], 8) {
                 let mut workload = RenderWorkload::new((i0, j0), (i1, j1), size);
                 let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-                workload.handle(&scene, &mut rng);
+                workload.handle(scene, &mut rng);
                 blit_chunk(
                     &mut image,
                     &RenderChunk {
@@ -1246,8 +1356,7 @@ mod tests {
             }
         }
 
-        // Byte for byte what `write_ppm` puts in the file: a 13 byte header
-        // and 48 * 48 * 3 bytes of colour, so 6925 bytes.
+        // A 13 byte header and 48 * 48 * 3 bytes of colour, so 6925 bytes.
         let mut ppm = Vec::with_capacity(6925);
         ppm.extend_from_slice(format!("P6\n{} {}\n255\n", size[0], size[1]).as_bytes());
         let bytes = image.bytes();
@@ -1261,18 +1370,8 @@ mod tests {
             ppm.len(),
             6925,
             "the serialised PPM is the wrong length, so it is not what \
-             `write_ppm` produces and the digest below means nothing"
+             `write_ppm` produces and the digests above mean nothing"
         );
-
-        assert_eq!(
-            digest_hex(&ppm),
-            GOLDEN_SHA256,
-            "the render changed. This is only correct if the change was intended to alter \
-             the image; otherwise an optimization has changed a pixel. If it was intended, \
-             re-derive the digest with:\n  \
-             light_transport --bench --serial --warmup 0 --iters 1 --size 48x48 \
-             --samples 2 --bounces 1 --seed 1 --out /tmp/golden.ppm\n  \
-             and sha256sum /tmp/golden.ppm"
-        );
+        ppm
     }
 }

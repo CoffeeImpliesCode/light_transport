@@ -22,11 +22,28 @@ pub trait Hit {
 pub struct Ray {
     pub origin: Vec3,
     pub direction: Vec3,
+    /// `direction * direction`, the quadratic term of the sphere test.
+    ///
+    /// It is a property of the ray, not of the sphere, so a scene with
+    /// five spheres used to ask the same question of the same vector five
+    /// times per ray and answer it five times. `Ray::new` answers it once,
+    /// in the expression the sphere test used, so the value the test sees
+    /// is the value it has always seen.
+    pub a: F,
 }
 
 impl Ray {
     fn at(&self, t: F) -> Vec3 {
         return self.origin + self.direction * t;
+    }
+
+    #[inline(always)]
+    pub fn new(origin: Vec3, direction: Vec3) -> Self {
+        Ray {
+            origin,
+            direction,
+            a: direction * direction,
+        }
     }
 }
 
@@ -46,7 +63,9 @@ impl Intersect for Sphere {
     #[inline(always)]
     fn intersect(&self, ray: &Ray) -> Option<Intersection> {
         let m = ray.origin - self.center;
-        let a = ray.direction * ray.direction;
+        // The quadratic term is the ray's, not the sphere's, and it is the
+        // same for every sphere in the scene. `Ray::new` computed it.
+        let a = ray.a;
         let b = m * ray.direction;
         let c = m * m - self.radius * self.radius;
 
@@ -62,17 +81,23 @@ impl Intersect for Sphere {
 
         let root = discriminant.sqrt();
         let near = (-b - root) / a;
-        let far = (-b + root) / a;
 
         // The origin may sit inside the sphere, so the near root can be
         // negative. Keep the smallest strictly positive root and drop
-        // geometry behind the ray.
+        // geometry behind the ray. The far root can only win when the near
+        // one is not positive, so the second division is only worth paying
+        // for then. Same expression, same division, one division less on
+        // the path that almost every hit takes.
         let distance = if near > 0.0 {
             near
-        } else if far > 0.0 {
-            far
         } else {
-            return None;
+            let far = (-b + root) / a;
+
+            if far > 0.0 {
+                far
+            } else {
+                return None;
+            }
         };
 
         return Some(Intersection {
@@ -147,6 +172,14 @@ pub struct Plane {
     pub normal: Vec3,
     pub material: Material,
 }
+
+/// The ray-plane distance, for one plane.
+///
+/// `Scene::intersect` runs this same arithmetic inline for a whole scene of
+/// planes. It keeps the two rejections as predicates instead of early
+/// returns, because a branch on whether the wall in front of the ray is in
+/// front at all mispredicts constantly, so the two copies have to stay in
+/// step: same expressions, same order, same answer for every ray.
 
 impl Intersect for Plane {
     #[inline(always)]

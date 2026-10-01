@@ -151,11 +151,18 @@ impl<T: Copy, const DIM: usize> Vec<T, DIM> {
 }
 
 impl<T: Copy + Num, const DIM: usize> Vec<T, DIM> {
+    /// Sum of the componentwise products, accumulated left to right.
+    ///
+    /// Zipping the two component arrays keeps the index inside the slice
+    /// iterators, so the bounds check is gone by construction instead of by
+    /// relying on the optimiser to fold it out of a `DIM`-trip loop. Trip
+    /// count and summation order are unchanged, so the result is bit for bit
+    /// what the index loop produced. Called from every primitive intersection.
     #[inline(always)]
     pub fn dot(&self, other: Vec<T, DIM>) -> T {
         let mut res = T::zero();
-        for i in 0..DIM {
-            res = res + self[i] * other[i];
+        for (s, o) in self.0.iter().zip(other.0.iter()) {
+            res = res + *s * *o;
         }
         res
     }
@@ -220,6 +227,12 @@ impl<T: Float + Constants + From<f32>> Vec<T, 3> {
     /// `ThreadRng` checks a reseeding counter on every draw, and that atomic
     /// load was the hottest single instruction in the whole binary under
     /// perf. One generator per worker pays it once rather than per sample.
+    ///
+    /// Force-inline: `random_on_hemisphere` is already `#[inline(always)]` and
+    /// calls this on every scatter, so leaving the sampler out of line plants a
+    /// call and a register spill in the middle of the bounce loop. Pure
+    /// codegen change; the draw sequence is untouched.
+    #[inline(always)]
     pub fn random_on_sphere<R: rand::Rng + ?Sized>(rng: &mut R) -> Vec<T, 3> {
         loop {
             let x: f32 = rng.random::<f32>() * 2.0 - 1.0;
@@ -291,7 +304,16 @@ impl<T: Float + From<f32>, const DIM: usize> Vec<T, DIM> {
     pub fn normalized(&self) -> Self {
         let len = self.len();
         // A zero or non-finite length reciprocates to inf, so the product would be NaN.
-        if len.is_finite() && len > T::zero() {
+        //
+        // Positivity is tested first on purpose. Both operands are pure
+        // predicates, so `&&` short-circuits them in either order and the
+        // result is identical, but `len > 0` rejects zero, every negative and
+        // NaN in one ordinary compare. `is_finite` is an abs-and-compare
+        // against the bit pattern and only then has to run, for the `+inf` a
+        // huge vector can still produce. A direction reaching here is unit
+        // length to within rounding, so `len` is near 1 and the common path
+        // pays one compare instead of two.
+        if len > T::zero() && len.is_finite() {
             *self * len.recip()
         } else {
             Self::zero()
@@ -317,95 +339,119 @@ impl<T: Copy, const DIM: usize> IndexMut<usize> for Vec<T, DIM> {
     }
 }
 
+// Every operator below walks the component arrays with `zip` or with a plain
+// `iter_mut` rather than `for i in 0..DIM { self[i] = ... }`. The index form
+// makes each read and write go through `Index`, which is bounds-checked and
+// which this module keeps that way for its callers; here the index lives
+// inside a slice iterator, so the check has nowhere to be generated. The
+// operation, its operand order and its evaluation order per component are
+// exactly what they were, so results are bit for bit unchanged.
 impl<T: Copy + Num, const DIM: usize> Add<Vec<T, DIM>> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn add(self, other: Vec<T, DIM>) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..res.0.len() {
-            res[i] = res[i] + other[i];
+        let mut res = self.0;
+        for (r, o) in res.iter_mut().zip(other.0.iter()) {
+            *r = *r + *o;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> AddAssign<Vec<T, DIM>> for Vec<T, DIM> {
+    #[inline(always)]
     fn add_assign(&mut self, other: Vec<T, DIM>) {
-        for i in 0..self.0.len() {
-            self[i] = self[i] + other[i];
+        for (r, o) in self.0.iter_mut().zip(other.0.iter()) {
+            *r = *r + *o;
         }
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> Add<T> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn add(self, offset: T) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..self.0.len() {
-            res[i] = res[i] + offset
+        let mut res = self.0;
+        for r in res.iter_mut() {
+            *r = *r + offset;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> AddAssign<T> for Vec<T, DIM> {
+    #[inline(always)]
     fn add_assign(&mut self, offset: T) {
-        for i in 0..self.0.len() {
-            self[i] = self[i] + offset;
+        for r in self.0.iter_mut() {
+            *r = *r + offset;
         }
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> Sub<Vec<T, DIM>> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn sub(self, other: Vec<T, DIM>) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..self.0.len() {
-            res[i] = res[i] - other[i];
+        let mut res = self.0;
+        for (r, o) in res.iter_mut().zip(other.0.iter()) {
+            *r = *r - *o;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> Neg for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn neg(self) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..self.0.len() {
-            res[i] = T::zero() - res[i];
+        // `T::zero() - x` and `-x` are not the same function: on floats they
+        // disagree in the sign of zero (`0 - 0` is `+0`, `-0` is `-0`) and a
+        // negated zero can reach the renderer through
+        // `random_on_hemisphere`. The subtract is the instruction that was
+        // already being emitted, so it costs nothing to keep and it keeps the
+        // operator bit-exact.
+        let zero = T::zero();
+        let mut res = self.0;
+        for r in res.iter_mut() {
+            *r = zero - *r;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> SubAssign<Vec<T, DIM>> for Vec<T, DIM> {
+    #[inline(always)]
     fn sub_assign(&mut self, other: Vec<T, DIM>) {
-        for i in 0..self.0.len() {
-            self[i] = self[i] - other[i];
+        for (r, o) in self.0.iter_mut().zip(other.0.iter()) {
+            *r = *r - *o;
         }
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> Sub<T> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn sub(self, offset: T) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..self.0.len() {
-            res[i] = res[i] - offset;
+        let mut res = self.0;
+        for r in res.iter_mut() {
+            *r = *r - offset;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> SubAssign<T> for Vec<T, DIM> {
+    #[inline(always)]
     fn sub_assign(&mut self, offset: T) {
-        for i in 0..self.0.len() {
-            self[i] = self[i] - offset;
+        for r in self.0.iter_mut() {
+            *r = *r - offset;
         }
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> Mul<Vec<T, DIM>> for Vec<T, DIM> {
     type Output = T;
+    #[inline(always)]
     fn mul(self, other: Vec<T, DIM>) -> T {
         self.dot(other)
     }
@@ -413,40 +459,48 @@ impl<T: Copy + Num, const DIM: usize> Mul<Vec<T, DIM>> for Vec<T, DIM> {
 
 impl<T: Copy + Num, const DIM: usize> Mul<T> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn mul(self, scale: T) -> Vec<T, DIM> {
-        let mut res = self.clone();
-        for i in 0..self.0.len() {
-            res[i] = res[i] * scale;
+        let mut res = self.0;
+        for r in res.iter_mut() {
+            *r = *r * scale;
         }
-        res
+        Vec(res)
     }
 }
 
 impl<T: Copy + Num, const DIM: usize> MulAssign<T> for Vec<T, DIM> {
+    #[inline(always)]
     fn mul_assign(&mut self, scale: T) {
-        for i in 0..self.0.len() {
-            self[i] = self[i] * scale;
+        for r in self.0.iter_mut() {
+            *r = *r * scale;
         }
     }
 }
 
 impl<T: Copy + Float, const DIM: usize> Div<T> for Vec<T, DIM> {
     type Output = Vec<T, DIM>;
+    #[inline(always)]
     fn div(self, scale: T) -> Vec<T, DIM> {
+        // Reciprocal then multiply, kept on purpose. This is what the operator
+        // has always computed and the render is pinned bit-for-bit against it;
+        // a real `r / scale` rounds differently in the last bit and that
+        // difference is visible in the golden image. Not a wart to fix here.
         let over = scale.recip();
-        let mut ret = self.clone();
-        for i in 0..self.0.len() {
-            ret[i] = ret[i] * over;
+        let mut ret = self.0;
+        for r in ret.iter_mut() {
+            *r = *r * over;
         }
-        ret
+        Vec(ret)
     }
 }
 
 impl<T: Copy + Float, const DIM: usize> DivAssign<T> for Vec<T, DIM> {
+    #[inline(always)]
     fn div_assign(&mut self, scale: T) {
         let over = scale.recip();
-        for i in 0..self.0.len() {
-            self[i] = self[i] * over;
+        for r in self.0.iter_mut() {
+            *r = *r * over;
         }
     }
 }

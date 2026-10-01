@@ -84,23 +84,15 @@ impl Color {
     /// radiance, so it passes through untouched.
     #[inline(always)]
     pub fn gamma(&self) -> Self {
-        Color([
-            self[0].powf(2.2),
-            self[1].powf(2.2),
-            self[2].powf(2.2),
-            self[3],
-        ])
+        let [r, g, b, a] = self.0;
+        Color([r.powf(2.2), g.powf(2.2), b.powf(2.2), a])
     }
 
     /// Inverse of [`Color::gamma`]. Alpha passes through untouched.
     #[inline(always)]
     pub fn ungamma(&self) -> Self {
-        Color([
-            self[0].powf(1.0 / 2.2),
-            self[1].powf(1.0 / 2.2),
-            self[2].powf(1.0 / 2.2),
-            self[3],
-        ])
+        let [r, g, b, a] = self.0;
+        Color([r.powf(1.0 / 2.2), g.powf(1.0 / 2.2), b.powf(1.0 / 2.2), a])
     }
 
     pub fn as_rgb_slice(&self) -> &[f32; 3] {
@@ -112,27 +104,28 @@ impl Color {
     }
 }
 
+// The operators below work on the inner `[f32; 4]` rather than through
+// `Index`. Indexing costs a bounds check per component, and these run once
+// per component per bounce on the hottest path in the renderer; destructuring
+// is the same arithmetic with the check gone by construction.
+
 impl Add<Color> for Color {
     type Output = Color;
 
     #[inline(always)]
     fn add(self, other: Color) -> Self::Output {
-        return Color::new(
-            self[0] + other[0],
-            self[1] + other[1],
-            self[2] + other[2],
-            self[3] + other[3],
-        );
+        let [lr, lg, lb, la] = self.0;
+        let [rr, rg, rb, ra] = other.0;
+        Color([lr + rr, lg + rg, lb + rb, la + ra])
     }
 }
 
 impl AddAssign<Color> for Color {
     #[inline(always)]
     fn add_assign(&mut self, other: Color) {
-        self[0] += other[0];
-        self[1] += other[1];
-        self[2] += other[2];
-        self[3] += other[3];
+        let [lr, lg, lb, la] = self.0;
+        let [rr, rg, rb, ra] = other.0;
+        self.0 = [lr + rr, lg + rg, lb + rb, la + ra];
     }
 }
 
@@ -141,22 +134,18 @@ impl Sub<Color> for Color {
 
     #[inline(always)]
     fn sub(self, other: Color) -> Self::Output {
-        return Color::new(
-            self[0] - other[0],
-            self[1] - other[1],
-            self[2] - other[2],
-            self[3] - other[3],
-        );
+        let [lr, lg, lb, la] = self.0;
+        let [rr, rg, rb, ra] = other.0;
+        Color([lr - rr, lg - rg, lb - rb, la - ra])
     }
 }
 
 impl SubAssign<Color> for Color {
     #[inline(always)]
     fn sub_assign(&mut self, other: Color) {
-        self[0] -= other[0];
-        self[1] -= other[1];
-        self[2] -= other[2];
-        self[3] -= other[3];
+        let [lr, lg, lb, la] = self.0;
+        let [rr, rg, rb, ra] = other.0;
+        self.0 = [lr - rr, lg - rg, lb - rb, la - ra];
     }
 }
 
@@ -165,16 +154,16 @@ impl Mul<f32> for Color {
 
     #[inline(always)]
     fn mul(self, scale: f32) -> Self::Output {
-        return Color::new(self[0] * scale, self[1] * scale, self[2] * scale, self[3]);
+        let [r, g, b, a] = self.0;
+        Color([r * scale, g * scale, b * scale, a])
     }
 }
 
 impl MulAssign<f32> for Color {
     #[inline(always)]
     fn mul_assign(&mut self, scale: f32) {
-        self[0] *= scale;
-        self[1] *= scale;
-        self[2] *= scale;
+        let [r, g, b, a] = self.0;
+        self.0 = [r * scale, g * scale, b * scale, a];
     }
 }
 
@@ -184,7 +173,8 @@ impl Mul<f64> for Color {
     #[inline(always)]
     fn mul(self, scale: f64) -> Self::Output {
         let scale = scale as f32;
-        return Color::new(self[0] * scale, self[1] * scale, self[2] * scale, self[3]);
+        let [r, g, b, a] = self.0;
+        Color([r * scale, g * scale, b * scale, a])
     }
 }
 
@@ -192,9 +182,8 @@ impl MulAssign<f64> for Color {
     #[inline(always)]
     fn mul_assign(&mut self, scale: f64) {
         let scale = scale as f32;
-        self[0] *= scale;
-        self[1] *= scale;
-        self[2] *= scale;
+        let [r, g, b, a] = self.0;
+        self.0 = [r * scale, g * scale, b * scale, a];
     }
 }
 
@@ -203,12 +192,9 @@ impl Mul<Color> for Color {
 
     #[inline(always)]
     fn mul(self, other: Color) -> Self::Output {
-        Color::new(
-            self[0] * other[0],
-            self[1] * other[1],
-            self[2] * other[2],
-            self[3],
-        )
+        let [lr, lg, lb, la] = self.0;
+        let [rr, rg, rb, _] = other.0;
+        Color([lr * rr, lg * rg, lb * rb, la])
     }
 }
 
@@ -231,11 +217,8 @@ impl IndexMut<usize> for Color {
 impl Into<Color32> for Color {
     #[inline(always)]
     fn into(self) -> Color32 {
-        Color32::from_rgb(
-            (self[0] * 255.0) as u8,
-            (self[1] * 255.0) as u8,
-            (self[2] * 255.0) as u8,
-        )
+        let [r, g, b, _] = self.0;
+        Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
     }
 }
 
@@ -272,11 +255,12 @@ impl From<&[u8]> for RGBA {
 impl From<Color> for RGBA {
     #[inline(always)]
     fn from(c: Color) -> Self {
+        let [r, g, b, _] = c.0;
         RGBA::new(
-            (c[0].min(1.0) * 255.0) as u8,
-            (c[1].min(1.0) * 255.0) as u8,
-            (c[2].min(1.0) * 255.0) as u8,
-            255, // (c[3] * 255.0) as u8,
+            (r.min(1.0) * 255.0) as u8,
+            (g.min(1.0) * 255.0) as u8,
+            (b.min(1.0) * 255.0) as u8,
+            255, // (c.0[3] * 255.0) as u8,
         )
     }
 }
